@@ -191,6 +191,10 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `MAX_ATTEMPTS` | `0` | Stop calling after this many misses in a row. 0 means keep trying |
 | `QUIET_HOURS` | empty | No calls in this window, like `22-7`. Calls wait until it ends |
 | `VOICE` | `cedar` | OpenAI voice |
+| `VOICE_ENGINE` | `realtime` | `realtime` or `live` (GPT-Live). See [Voice engines](#voice-engines) |
+| `LIVE_VOICE` | `marin` | Voice for GPT-Live |
+| `LIVE_BACKEND_MODEL` | `gpt-5.5` | Model GPT-Live hands tool calls to |
+| `OPENAI_WEBHOOK_SECRET` | empty | Only for GPT-Live over SIP |
 | `ASSISTANT_NAME` | `Anton` | Rename your assistant |
 | `PORCH_URL` | empty | Address of your porch hub. Empty turns porch off |
 | `PORCH_TOKEN` | empty | Anton's porch token |
@@ -227,6 +231,31 @@ curl -X POST http://127.0.0.1:8787/notify -d '{"message":"The nightly build fail
 
 This only works from the laptop itself.
 
+## Voice engines
+
+Anton can run calls on two OpenAI voice models. Pick one with `VOICE_ENGINE`.
+
+- `realtime` (default): gpt-realtime. It takes turns: it waits for you to finish, then answers. When you talk over it, Anton stops the audio already sent to the phone.
+- `live`: GPT-Live (`gpt-live-1`), a full-duplex model. It listens while it talks and decides by itself when to stop, pause or carry on, so cutting in feels like talking to a person. Anton's tools run through a backend model (`LIVE_BACKEND_MODEL`) that GPT-Live hands work to. About $0.05 a minute for the voice, plus the backend model.
+
+Both use the same tools and the same only-you rule. With `live`, "you spoke" means GPT-Live heard words from you, since it has no separate turn signal.
+
+### GPT-Live over SIP (optional)
+
+Normally call audio goes Twilio -> Anton -> OpenAI. With a Twilio SIP trunk pointed at OpenAI, the audio goes straight to OpenAI and Anton only drives the call. Anton never touches audio, so there is no tunnel for media.
+
+1. In Twilio, create an Elastic SIP trunk with TLS and SRTP, point its origination URI at `sip.api.openai.com` over TLS as OpenAI's [Voice over SIP guide](https://developers.openai.com/api/docs/guides/voice-sip?api=live) shows, and attach a number.
+2. In the OpenAI project settings, add a webhook for `live.transport.incoming` pointing at `<your public url>/live/incoming`. Put its signing secret in `OPENAI_WEBHOOK_SECRET`.
+3. Start Anton and call the trunk's number.
+
+Anton checks the webhook signature and the caller's number, accepts the call with the same settings as `live`, and listens on the call's sideband connection. Anton still calls you through the normal media stream; outbound SIP is not built yet.
+
+### Testing the voice engines
+
+- `npm test`: the GPT-Live engine against a fake GPT-Live server (session settings, audio passing through unchanged, tool calls and their results, the only-you rule after an update, hanging up, transcripts) and the SIP webhook (signatures, replayed deliveries, unknown callers, accept settings, sideband). No network, no Claude.
+- `npm run check-live`: a call on the real GPT-Live API with a synthetic caller and stand-in tools, no phone. It checks that Anton greets, that a status question reaches `get_status` and the answer is spoken, and that Anton goes quiet when the caller talks over a long answer. Costs a few cents.
+- A real phone call is still the last step for each engine: interrupting mid-sentence, a permission yes/no, and an update arriving mid-call.
+
 ## Safety
 
 - Anton only talks to `MY_NUMBER`. Calls from other numbers are rejected.
@@ -242,7 +271,7 @@ Anyone who can call from your number, or spoof it, can talk to Anton. Keep `PERM
 ## Costs
 
 - Twilio: about $1.15 a month for the number, plus about 1 to 2 cents a minute for calls.
-- OpenAI Realtime: a few cents a minute of talking.
+- OpenAI Realtime: a few cents a minute of talking. GPT-Live: $0.05 a minute plus its backend model.
 - Claude Code: your normal plan.
 
 ## Limits
