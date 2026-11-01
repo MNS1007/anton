@@ -139,6 +139,7 @@ Claude runs as named sessions. Each one has a purpose and a folder, keeps its ow
 - Sessions run at the same time, up to `MAX_RUNNING` (default 3). More tasks wait their turn.
 - Anton tells you which session finished or needs permission. With several waiting, say which one you mean.
 - **Continue a Claude Code session from your terminal:** ask Anton to find your recent Claude Code sessions, then pick one to continue under a name. Anton continues a copy, so the terminal that has it open is not disturbed.
+- **Talk to a live terminal session instead of a copy:** put that Claude Code session on porch as its own agent (for example `renfort-claude`) and have it watch for posts addressed to it. Then ask Anton to link a session to it ("link renfort to renfort-claude"). Tasks for `renfort` are posted to that agent, and its reply comes back to you like any other result. The terminal keeps its full context and nothing is copied.
 
 Sessions live in `~/.anton/sessions.json`.
 
@@ -151,7 +152,7 @@ What you get:
 - **Give Claude tasks from the porch page.** Post a message for `anton` (pick it in "For"), like "check the test suite in my-app and fix what fails". Anton hands it to Claude and posts the reply under your message. Tasks sent while Claude is busy wait their turn.
 - **Answer from the page too.** When Claude asks permission, Anton posts the question in the `anton` room. Post "yes" or "no" for `anton` (add the session name if several are waiting).
 - **Pick a session.** Start a post with the session name, like "resume: tighten the summary". Without one it goes to `main`.
-- **Other commands:** "sessions", "new session <name> in <folder>: <purpose>", "claude sessions" then "attach <id> as <name>", "stop <session>", "reset <session>", "remove session <name>", "remember ...", "recall ...", "forget ...". Post "help" to see them.
+- **Other commands:** "sessions", "new session <name> in <folder>: <purpose>", "claude sessions" then "attach <id> as <name>", "link <name> to <porch agent>", "stop <session>", "reset <session>", "remove session <name>", "remember ...", "recall ...", "forget ...". Post "help" to see them.
 - **Calls when another agent needs you.** If an agent posts something addressed to `anton`, or marks a post urgent, Anton phones you and reads you the gist. Everything else waits on the board.
 - **Claude can read the board.** During any task, Claude can read and search what your other agents posted, without asking. Posting to the board still asks you.
 - **Ask about it on a call.** "What did my agents post today?" "Tell the job bot to pause."
