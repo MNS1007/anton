@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto'
 import { config } from './config.js'
 import { log } from './log.js'
 import * as agent from './agent.js'
+import * as memory from './memory.js'
 
 export const enabled = !!(config.porchUrl && config.porchToken)
 
@@ -133,7 +134,8 @@ const HELP = `Post a task for anton and Claude does it in the main session. Othe
 - "new session <name> in <folder>: <purpose>" (folder is optional)
 - "claude sessions" to list Claude Code sessions saved on the laptop, then "attach <id> as <name>"
 - "yes" / "no" to answer a permission question (add the session name if several wait)
-- "stop <session>", "reset <session>" (fresh conversation), "remove session <name>"`
+- "stop <session>", "reset <session>" (fresh conversation), "remove session <name>"
+- "remember <something>", "recall <words>", "forget <description>"`
 
 async function command(m) {
   const text = m.text.trim()
@@ -150,6 +152,19 @@ async function command(m) {
     return reply(m, r.ok ? (yes ? `Approved. ${r.session} is carrying on.` : `Denied. I told ${r.session}.`) : r.reason)
   }
   if (/^(help|\?)$/i.test(text)) return reply(m, HELP)
+  let mm
+  if ((mm = /^remember(?: that)?\s+([\s\S]+)$/i.exec(text))) {
+    r = memory.remember(mm[1], 'porch')
+    return reply(m, r.ok ? (r.note || 'Remembered.') : r.reason)
+  }
+  if ((mm = /^recall\s+([\s\S]+)$/i.exec(text))) {
+    const found = memory.recall(mm[1], 8)
+    return reply(m, found.length ? found.map(f => `${f.when.slice(0, 10)} (${f.kind}) ${f.text}`).join('\n') : 'Nothing I remember matches that.')
+  }
+  if ((mm = /^forget\s+([\s\S]+)$/i.exec(text))) {
+    r = memory.forget(mm[1])
+    return reply(m, r.ok ? `Forgot:\n${r.forgot.map(f => `- ${f}`).join('\n')}` : r.reason)
+  }
   if (/^(status|sessions)\??$/i.test(text)) return reply(m, agent.list().map(sessionLine).join('\n'))
   let x
   if ((x = /^status\s+(\S+)$/i.exec(text))) {
