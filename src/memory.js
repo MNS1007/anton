@@ -44,11 +44,12 @@ function score(queryText, text) {
 
 // Notes
 
-export function remember(text, source = 'you') {
+// loose: also skip notes that say nearly the same thing (used for learned facts).
+export function remember(text, source = 'you', { loose = false } = {}) {
   text = String(text || '').trim().slice(0, 500)
   if (!text) return { ok: false, reason: 'Nothing to remember.' }
   const notes = readLines('notes.jsonl')
-  if (notes.some(n => n.text.toLowerCase() === text.toLowerCase())) return { ok: true, note: 'Already remembered.' }
+  if (notes.some(n => n.text.toLowerCase() === text.toLowerCase() || (loose && score(text, n.text) >= 0.6))) return { ok: true, note: 'Already remembered.' }
   append('notes.jsonl', { id: randomBytes(4).toString('hex'), ts: now(), source, text })
   log(`remembered (${source}): ${text.slice(0, 80)}`)
   return { ok: true }
@@ -131,13 +132,13 @@ export async function summarizeCall(callSid, lines) {
   const talk = lines.filter(l => l.who !== 'tool').map(l => `${l.who}: ${l.text}`).join('\n')
   const [summary, facts] = await Promise.all([
     ask(`Summarize this phone call between ${config.userName} and their assistant ${config.assistantName} in one to three plain sentences: what ${config.userName} wanted, what was done or decided, and anything left open. Use ${config.userName}'s name or they, never guessed pronouns. Reply with only the summary.\n\n${clip(talk, 20000)}`),
-    ask(`These are things ${config.userName} said on a phone call. List durable facts about ${config.userName} worth remembering for future calls: preferences, plans, people, projects, deadlines. Skip anything about this call only, small talk, or instructions for a single task. Write each fact as a short sentence that starts with ${config.userName}'s name. Never guess pronouns: repeat the name or use they. Reply with only a JSON array of strings, or [] if there is nothing.\n\n${clip(userLines.map(l => l.text).join('\n'), 12000)}`),
+    ask(`These are things ${config.userName} said on a phone call. List durable facts about ${config.userName} worth remembering for future calls: preferences, plans, people, projects, deadlines. Skip anything already in the known list, anything about this call only, small talk, or instructions for a single task. Write each fact as a short sentence that starts with ${config.userName}'s name. Never guess pronouns: repeat the name or use they. Reply with only a JSON array of strings, or [] if there is nothing.\n\nKnown already:\n${clip(readLines('notes.jsonl').map(n => `- ${n.text}`).join('\n'), 4000) || '(nothing)'}\n\nWhat ${config.userName} said:\n${clip(userLines.map(l => l.text).join('\n'), 12000)}`),
   ])
   if (summary) append('episodes.jsonl', { ts: now(), callSid, summary: clip(summary.trim(), 800) })
   let list = []
   try { list = JSON.parse(String(facts).replace(/^```(json)?|```$/g, '').trim()) } catch {}
   for (const f of Array.isArray(list) ? list.slice(0, 8) : []) {
-    if (typeof f === 'string' && f.trim() && !wasForgotten(f)) remember(f, 'call')
+    if (typeof f === 'string' && f.trim() && !wasForgotten(f)) remember(f, 'call', { loose: true })
   }
   log(`call remembered: ${summary ? 'summary' : 'no summary'}, ${Array.isArray(list) ? list.length : 0} fact(s)`)
 }
