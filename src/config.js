@@ -59,6 +59,9 @@ export const config = {
   maxAttempts: Number(env('MAX_ATTEMPTS', 0)),
   quietHours: env('QUIET_HOURS', ''),
 
+  antonHome: resolve(expandHome(env('ANTON_HOME', '~/.anton'))),
+  maxRunning: Number(env('MAX_RUNNING', 3)),
+
   porchUrl: env('PORCH_URL', '').replace(/\/$/, ''),
   porchToken: env('PORCH_TOKEN'),
   porchBoss: env('PORCH_BOSS', 'me'),

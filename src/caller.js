@@ -48,7 +48,8 @@ export function callEnded({ userSpoke, updates }) {
   }
   if (queue.length || agent.hasPendingPermission()) {
     if (userSpoke && agent.hasPendingPermission() && !queue.length) {
-      queue.push(`Reminder: Claude is still waiting for your answer. ${agent.status().waitingForPermission}`)
+      const waits = agent.pendingPermissions().map(p => `${p.session}: ${p.summary}`).join('; ')
+      queue.push(`Reminder: Claude is still waiting for your answer. ${waits}`)
     }
     scheduleRetry()
   }
