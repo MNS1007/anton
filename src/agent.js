@@ -295,6 +295,8 @@ async function run(s, message, label, onDone) {
         appendSystemPrompt: systemNote(s),
         canUseTool: canUseToolFor(s),
         abortController: s.abort,
+        // Marks Anton's own runs so the Claude Code hook does not report them twice.
+        env: { ...process.env, ANTON_CHILD: '1' },
       },
     })
     for await (const msg of q) {

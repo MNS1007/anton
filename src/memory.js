@@ -149,7 +149,7 @@ async function ask(prompt) {
   try {
     for await (const msg of query({
       prompt,
-      options: { tools: [], maxTurns: 1, settingSources: [], persistSession: false, model: config.memoryModel, cwd: dir },
+      options: { tools: [], maxTurns: 1, settingSources: [], persistSession: false, model: config.memoryModel, cwd: dir, env: { ...process.env, ANTON_CHILD: '1' } },
     })) {
       if (msg.type === 'result' && msg.subtype === 'success') out = msg.result || ''
     }
