@@ -3,7 +3,6 @@
 // and phones you when another agent posts something that matters.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { config } from './config.js'
 import { log } from './log.js'
@@ -13,7 +12,7 @@ export const enabled = !!(config.porchUrl && config.porchToken)
 
 const auth = { Authorization: `Bearer ${config.porchToken}` }
 // Remembers the last message seen, per hub, so nothing is missed across restarts.
-const cursorFile = join(homedir(), '.anton', 'porch-cursor-' + createHash('sha256').update(config.porchUrl).digest('hex').slice(0, 8))
+const cursorFile = join(config.antonHome, 'porch-cursor-' + createHash('sha256').update(config.porchUrl).digest('hex').slice(0, 8))
 let me = { name: 'anton' }
 let phoneNotify = null
 let calls = { day: '', count: 0 }
@@ -128,49 +127,87 @@ function underDailyCap() {
 const reply = (m, text, extra = {}) =>
   post({ room: m.room, reply_to: m.id, to: [m.from], kind: 'answer', text: clip(text, 7500), ...extra })
 
+const HELP = `Post a task for anton and Claude does it in the main session. Other things you can post:
+- "<session>: <task>" to use another session
+- "sessions" or "status" to see what each session is doing
+- "new session <name> in <folder>: <purpose>" (folder is optional)
+- "claude sessions" to list Claude Code sessions saved on the laptop, then "attach <id> as <name>"
+- "yes" / "no" to answer a permission question (add the session name if several wait)
+- "stop <session>", "reset <session>" (fresh conversation), "remove session <name>"`
+
 async function command(m) {
   const text = m.text.trim()
-  const s = agent.status()
+  const pending = agent.pendingPermissions()
+  let r
 
-  if (s.waitingForPermission) {
-    if (/^(yes|y|yep|approve|approved|ok|okay|go ahead|do it)\b/i.test(text)) {
-      agent.answerPermission(true)
-      return reply(m, 'Approved. Claude is carrying on.')
-    }
-    if (/^(no|n|nope|deny|don't|do not)\b/i.test(text)) {
-      agent.answerPermission(false, text)
-      return reply(m, 'Denied. I told Claude.')
-    }
+  // yes / no, optionally followed by a session name
+  const yes = /^(yes|y|yep|approve|approved|ok|okay|go ahead|do it)\b[\s,.!]*(\S+)?/i.exec(text)
+  const no = /^(no|n|nope|deny|don't|do not)\b[\s,.!]*(\S+)?/i.exec(text)
+  if (pending.length && (yes || no)) {
+    const name = (yes || no)[2]
+    const target = name && agent.status(name).name ? name : undefined
+    r = agent.answerPermission(!!yes, no ? text : undefined, target)
+    return reply(m, r.ok ? (yes ? `Approved. ${r.session} is carrying on.` : `Denied. I told ${r.session}.`) : r.reason)
   }
-  if (/^stop\b/i.test(text)) {
-    const r = agent.stop()
-    return reply(m, r.ok ? 'Stopped the task.' : r.reason)
+  if (/^(help|\?)$/i.test(text)) return reply(m, HELP)
+  if (/^(status|sessions)\??$/i.test(text)) return reply(m, agent.list().map(sessionLine).join('\n'))
+  let x
+  if ((x = /^status\s+(\S+)$/i.exec(text))) {
+    const s = agent.status(x[1])
+    return reply(m, s.name ? sessionLine(s) + (s.lastResult ? `\nLast result: ${s.lastResult}` : '') : s.reason)
   }
-  if (/^status\??$/i.test(text)) {
-    const lines = [
-      s.running ? `Working on: ${s.task} (${s.minutesRunning} min)` : 'Idle.',
-      s.waitingForPermission ? `Waiting for your yes or no: ${s.waitingForPermission}` : '',
-      s.latestUpdate ? `Latest: ${s.latestUpdate}` : '',
-      s.queued ? `${s.queued} more task(s) waiting.` : '',
-    ]
-    return reply(m, lines.filter(Boolean).join('\n'))
+  if ((x = /^stop\b\s*(\S+)?$/i.exec(text))) {
+    r = agent.stop(x[1])
+    return reply(m, r.ok ? `Stopped ${r.session}.` : r.reason)
   }
-  if (/^new session\b/i.test(text)) {
-    const r = agent.newSession()
-    return reply(m, r.ok ? 'Started a fresh Claude conversation.' : r.reason)
+  if ((x = /^(?:reset|new conversation)\s*(\S+)?$/i.exec(text))) {
+    r = agent.resetSession(x[1])
+    return reply(m, r.ok ? r.note : r.reason)
   }
-  if (s.waitingForPermission) {
-    return reply(m, `Claude is waiting for a yes or no first: ${s.waitingForPermission}`)
+  if ((x = /^remove session\s+(\S+)$/i.exec(text))) {
+    r = agent.removeSession(x[1])
+    return reply(m, r.ok ? `Removed ${x[1]}.` : r.reason)
+  }
+  if ((x = /^new session\s+(\S+)(?:\s+in\s+((?:[a-z]:[\\/])?[^:]+?))?\s*(?::\s+([\s\S]+))?$/i.exec(text))) {
+    r = agent.createSession({ name: x[1], folder: x[2], purpose: x[3] })
+    return reply(m, r.ok ? `Created ${r.name}, working in ${r.folder}. Post "${r.name}: <task>" to use it.` : r.reason)
+  }
+  if ((x = /^claude sessions\s*(.+)?$/i.exec(text))) {
+    const found = await agent.findClaudeSessions({ folder: x[1] })
+    if (!found.length) return reply(m, 'No saved Claude Code sessions found there.')
+    return reply(m, found.map(f => `${f.id}  ${f.title} (${f.folder}, ${f.lastActive.slice(0, 16).replace('T', ' ')})${f.alreadyAttached ? ' [attached]' : ''}`).join('\n') + '\n\nPost "attach <id> as <name>" to continue one.')
+  }
+  if ((x = /^attach\s+([0-9a-f-]{36})\s+as\s+(\S+)(?:\s*:\s*([\s\S]+))?$/i.exec(text))) {
+    r = await agent.attachSession({ name: x[2], purpose: x[3], claudeSessionId: x[1] })
+    return reply(m, r.ok ? `Attached as ${r.name}, in ${r.folder}. It continues as a copy, so your terminal is not disturbed. Post "${r.name}: <task>" to use it.` : r.reason)
+  }
+  if (pending.length) {
+    return reply(m, `Claude is waiting for a yes or no first: ${pending.map(p => `${p.session}: ${p.summary}`).join('; ')}`)
   }
 
-  const task = `[Task sent through the porch hub by ${m.from}. Your final reply is posted back to the hub as text, so it can be a little longer than a spoken reply.]\n\n${text}`
-  const r = agent.ask(task, {
-    label: text,
+  // "<session>: task" picks a session; anything else goes to main.
+  let session = 'main'
+  let task = text
+  if ((x = /^([a-z0-9-]{1,40})\s*:\s+([\s\S]+)$/i.exec(text)) && agent.status(x[1]).name) {
+    session = agent.status(x[1]).name
+    task = x[2]
+  }
+  const prompt = `[Task sent through the porch hub by ${m.from}. Your final reply is posted back to the hub as text, so it can be a little longer than a spoken reply.]\n\n${task}`
+  r = agent.ask(prompt, {
+    session,
+    label: task,
     queue: true,
-    onDone: (result, failed) => reply(m, failed ? `That task ended early: ${failed}` : result, failed ? { kind: 'alert' } : {}),
+    onDone: (result, failed) => reply(m, failed ? `[${session}] That task ended early: ${failed}` : `[${session}] ${result}`, failed ? { kind: 'alert' } : {}),
   })
   if (!r.ok) return reply(m, r.reason)
-  return reply(m, r.queued ? `Got it. ${r.queued} task(s) ahead of this one.` : 'On it.', { kind: 'note' })
+  const ahead = r.queued ? r.queued - 1 : 0
+  return reply(m, r.queued ? `Got it. ${session} is busy, so this waits${ahead ? ` behind ${ahead} other task(s)` : ' and starts next'}.` : `On it, in ${session}.`, { kind: 'note' })
+}
+
+function sessionLine(s) {
+  const state = s.waitingForPermission ? `waiting for your yes or no: ${s.waitingForPermission}`
+    : s.running ? `working on "${s.task}" (${s.minutesRunning} min)` : 'idle'
+  return `${s.name}${s.purpose ? ` (${s.purpose})` : ''}: ${state}${s.queued ? `, ${s.queued} waiting` : ''}`
 }
 
 function readCursor() {
@@ -179,7 +216,7 @@ function readCursor() {
 
 function writeCursor(id) {
   try {
-    mkdirSync(join(homedir(), '.anton'), { recursive: true })
+    mkdirSync(config.antonHome, { recursive: true })
     writeFileSync(cursorFile, String(id))
   } catch {}
 }
