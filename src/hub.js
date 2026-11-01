@@ -43,6 +43,7 @@ export async function start(notify) {
   phoneNotify = notify
   me = await call('/v1/me')
   log(`connected to porch as ${me.name}`)
+  agent.onAgentPost(msg => post({ room: config.porchRoom, ...msg }))
   watch().catch(err => log(`porch watcher stopped: ${err.message}`))
 }
 
@@ -95,6 +96,8 @@ async function watch() {
 
 async function onMessage(m) {
   const forMe = m.to.includes(me.name)
+  // A reply from an agent that one of Anton's sessions stands for finishes that task.
+  if (forMe && agent.agentReply(m)) return
   // Messages from you that name Anton are instructions. Other agents only inform.
   if (m.from === config.porchBoss) {
     if (forMe) await command(m)
@@ -132,6 +135,7 @@ const HELP = `Post a task for anton and Claude does it in the main session. Othe
 - "<session>: <task>" to use another session
 - "sessions" or "status" to see what each session is doing
 - "new session <name> in <folder>: <purpose>" (folder is optional)
+- "link <name> to <porch agent>" for a session that talks to another agent, like a Claude Code terminal on porch
 - "claude sessions" to list Claude Code sessions saved on the laptop, then "attach <id> as <name>"
 - "yes" / "no" to answer a permission question (add the session name if several wait)
 - "stop <session>", "reset <session>" (fresh conversation), "remove session <name>"
@@ -186,6 +190,10 @@ async function command(m) {
   if ((x = /^new session\s+(\S+)(?:\s+in\s+((?:[a-z]:[\\/])?[^:]+?))?\s*(?::\s+([\s\S]+))?$/i.exec(text))) {
     r = agent.createSession({ name: x[1], folder: x[2], purpose: x[3] })
     return reply(m, r.ok ? `Created ${r.name}, working in ${r.folder}. Post "${r.name}: <task>" to use it.` : r.reason)
+  }
+  if ((x = /^link\s+(\S+)\s+to\s+(\S+)(?:\s*:\s*([\s\S]+))?$/i.exec(text))) {
+    r = agent.linkAgent({ name: x[1], agent: x[2], purpose: x[3] })
+    return reply(m, r.ok ? `Linked. Post "${r.name}: <task>" and it goes to ${r.agent}.` : r.reason)
   }
   if ((x = /^claude sessions\s*(.+)?$/i.exec(text))) {
     const found = await agent.findClaudeSessions({ folder: x[1] })

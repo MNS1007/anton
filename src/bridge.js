@@ -31,6 +31,8 @@ const TOOLS = [
     { folder: { type: 'string', description: 'Only sessions from this folder or repo' } }),
   fn('attach_session', 'Continue a saved Claude Code session (from find_claude_sessions) under a name. It continues as a copy, so an open terminal is not disturbed.',
     { name: { type: 'string' }, purpose: { type: 'string' }, claude_session_id: { type: 'string' } }, ['name', 'claude_session_id']),
+  ...(hub.enabled ? [fn('link_agent_session', 'Make a session that stands for another agent on porch, such as a Claude Code session open in a terminal. Tasks sent to it with ask_claude are posted to that agent, and its reply comes back as an update.',
+    { name: { type: 'string', description: 'Short name, like renfort' }, agent: { type: 'string', description: 'The agent name on porch' }, purpose: { type: 'string' } }, ['name', 'agent'])] : []),
   fn('reset_session', 'Give a session a fresh Claude conversation, forgetting the earlier one. Its name, purpose and folder stay.', { session }),
   fn('remember', `Save something ${config.userName} asked you to remember, as one short sentence that starts with their name.`, { text: { type: 'string' } }, ['text']),
   fn('recall', 'Search what you remember: notes, earlier calls and earlier Claude tasks.', { query: { type: 'string' } }, ['query']),
@@ -76,7 +78,7 @@ function sessionLines() {
   return agent.list().map(s => {
     const state = s.waitingForPermission ? `waiting for permission to ${s.waitingForPermission}`
       : s.running ? `working on "${s.task}" for ${s.minutesRunning} min` : 'idle'
-    return `- ${s.name}${s.purpose ? ` (${s.purpose})` : ''}: ${state}`
+    return `- ${s.name}${s.purpose ? ` (${s.purpose})` : ''}${s.porchAgent ? ` [the ${s.porchAgent} agent on porch, with its own context]` : ''}: ${state}`
   }).join('\n')
 }
 
@@ -250,7 +252,7 @@ export function handleCall(twilioWs) {
   }
 
   // Tools that act for the user. They only run on something the user said.
-  const ACTIONS = ['ask_claude', 'answer_permission', 'hub_post', 'create_session', 'attach_session', 'reset_session', 'remember', 'forget']
+  const ACTIONS = ['ask_claude', 'answer_permission', 'hub_post', 'create_session', 'attach_session', 'link_agent_session', 'reset_session', 'remember', 'forget']
 
   // Follow-ups go to the session last talked about on this call.
   let lastSession = null
@@ -283,6 +285,7 @@ export function handleCall(twilioWs) {
       case 'create_session': return remember(agent.createSession({ name: args.name, purpose: args.purpose, folder: args.folder }))
       case 'find_claude_sessions': return { sessions: await agent.findClaudeSessions({ folder: args.folder }) }
       case 'attach_session': return remember(await agent.attachSession({ name: args.name, purpose: args.purpose, claudeSessionId: String(args.claude_session_id || '') }))
+      case 'link_agent_session': return remember(agent.linkAgent({ name: args.name, agent: args.agent, purpose: args.purpose }))
       case 'reset_session': return remember(agent.resetSession(pick(args.session)))
       case 'remember': return memory.remember(args.text, 'call')
       case 'recall': outsideTurn = ++clock; return { found: memory.recall(String(args.query || '')) }

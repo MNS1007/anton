@@ -2,6 +2,9 @@
 // Each session has a purpose and a folder, keeps its own Claude conversation
 // (saved across restarts), and runs one task at a time. Sessions run side by side.
 // Anything worth telling the user goes out through the `notify` callback.
+// A session can also stand for another agent on porch (for example a Claude Code
+// session open in a terminal): its tasks are posted to that agent and its reply
+// is the result.
 import { query, listSessions, getSessionInfo } from '@anthropic-ai/claude-agent-sdk'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs'
 import { join, resolve, relative, isAbsolute } from 'node:path'
@@ -46,6 +49,7 @@ function blank(fields) {
     dir: fields.dir || config.workDir,
     claudeSessionId: fields.claudeSessionId || null,
     forkFrom: fields.forkFrom || null,
+    porchAgent: fields.porchAgent || null,
     created: fields.created || new Date().toISOString(),
     lastUsed: fields.lastUsed || null,
     // not saved
@@ -70,7 +74,7 @@ function load() {
 function save() {
   const keep = [...sessions.values()].map(s => ({
     name: s.name, purpose: s.purpose, dir: s.dir, claudeSessionId: s.claudeSessionId, forkFrom: s.forkFrom,
-    created: s.created, lastUsed: s.lastUsed, lastResult: clip(s.lastResult, 1500),
+    porchAgent: s.porchAgent || undefined, created: s.created, lastUsed: s.lastUsed, lastResult: clip(s.lastResult, 1500),
   }))
   try {
     mkdirSync(config.antonHome, { recursive: true })
@@ -91,7 +95,8 @@ function summary(s) {
   return {
     name: s.name,
     purpose: s.purpose,
-    folder: s.dir,
+    folder: s.porchAgent ? null : s.dir,
+    porchAgent: s.porchAgent,
     running: s.running,
     task: s.task,
     minutesRunning: s.startedAt ? Math.round((Date.now() - s.startedAt) / 60000) : 0,
@@ -174,9 +179,62 @@ export async function attachSession({ name, purpose, claudeSessionId }) {
   return { ok: true, name: n, folder: dir }
 }
 
+// A session that stands for another agent on porch, such as a Claude Code
+// session open in a terminal. Tasks are posted to it and its replies are the results.
+export function linkAgent({ name, agent: porchAgent, purpose }) {
+  const n = slug(name)
+  const a = String(porchAgent || '').trim()
+  if (!n || !a) return { ok: false, reason: 'Linking needs a session name and the porch agent name.' }
+  if (!agentPost) return { ok: false, reason: 'Anton is not connected to porch.' }
+  if (sessions.has(n)) return { ok: false, reason: `There is already a session named ${n}.` }
+  sessions.set(n, blank({ name: n, purpose: purpose || `the ${a} agent on porch`, porchAgent: a }))
+  save()
+  log(`session linked: ${n} talks to ${a} on porch`)
+  return { ok: true, name: n, agent: a }
+}
+
+let agentPost = null
+export function onAgentPost(fn) { agentPost = fn }
+
+function sendToAgent(s, message, label, onDone) {
+  s.running = true
+  s.task = clip(label || message, 300)
+  s.startedAt = Date.now()
+  s.lastUsed = new Date().toISOString()
+  s.lastText = ''
+  s.onDone = onDone || null
+  save()
+  log(`[${s.name}] posted to ${s.porchAgent}: ${s.task}`)
+  Promise.resolve().then(() => agentPost({ to: [s.porchAgent], kind: 'question', text: message }))
+    .catch(err => finishAgentTask(s, '', `could not post to porch: ${err.message}`))
+}
+
+// A porch message from an agent that a session stands for. Returns true when it was one.
+export function agentReply(m) {
+  const s = [...sessions.values()].find(x => x.porchAgent && x.porchAgent === m.from && x.running)
+  if (!s) return false
+  finishAgentTask(s, String(m.text || ''), null)
+  return true
+}
+
+function finishAgentTask(s, result, failed) {
+  const task = s.task
+  const done = s.onDone
+  s.running = false
+  s.startedAt = null
+  s.onDone = null
+  s.lastResult = failed ? `The task ended early: ${failed}` : result
+  if (done) report(done, result, failed)
+  else if (failed) notify({ kind: 'failed', session: s.name, task, text: `Could not reach ${s.porchAgent} for the ${s.name} session: ${clip(failed, 500)}` })
+  else notify({ kind: 'done', session: s.name, task, text: `${s.porchAgent} replied in the ${s.name} session: ${clip(result, 3000)}` })
+  try { finishFn({ session: s.name, task, result, failed, source: done ? 'porch' : 'call' }) } catch {}
+  save()
+}
+
 export function resetSession(name) {
   const s = find(name || 'main')
   if (!s) return { ok: false, reason: `No session named ${name}.` }
+  if (s.porchAgent) return { ok: false, reason: `${s.name} is ${s.porchAgent} on porch. It keeps its own conversation.` }
   if (s.running) return { ok: false, reason: `${s.name} is still working. Stop it first.` }
   s.claudeSessionId = null
   s.forkFrom = null
@@ -197,13 +255,19 @@ export function removeSession(name) {
 
 // Tasks
 
-const runningCount = () => [...sessions.values()].filter(s => s.running).length
+// Linked porch agents run elsewhere, so they do not take a local slot.
+const runningCount = () => [...sessions.values()].filter(s => s.running && !s.porchAgent).length
 
 // session: which one (default main). queue: wait instead of refusing when busy.
 // onDone(result, failed) receives the outcome instead of the phone.
 export function ask(message, { session = 'main', label, queue = false, onDone } = {}) {
   const s = find(session)
   if (!s) return { ok: false, reason: `No session named ${session}. Create it first.` }
+  // The other agent keeps its own queue, so follow-ups go straight through.
+  if (s.porchAgent) {
+    sendToAgent(s, message, label, onDone)
+    return { ok: true, session: s.name, note: `Posted to ${s.porchAgent} on porch. Its reply comes back as an update.` }
+  }
   const busy = s.running || runningCount() >= config.maxRunning
   if (busy) {
     if (!queue) {
@@ -233,6 +297,11 @@ export function stop(name) {
   const s = name ? find(name) : running.length === 1 ? running[0] : null
   if (!s) return { ok: false, reason: name ? `No session named ${name}.` : running.length ? `Several sessions are working: ${running.map(r => r.name).join(', ')}. Say which.` : 'Nothing is running.' }
   if (!s.running) return { ok: false, reason: `${s.name} is not working on anything.` }
+  if (s.porchAgent) {
+    Promise.resolve().then(() => agentPost({ to: [s.porchAgent], kind: 'note', text: 'Stop the task I sent you.' })).catch(() => {})
+    finishAgentTask(s, '', 'stopped by the user')
+    return { ok: true, session: s.name }
+  }
   s.abort?.abort()
   if (s.pending) answerPermission(false, 'The user stopped the task.', s.name)
   return { ok: true, session: s.name }
