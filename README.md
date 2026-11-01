@@ -14,6 +14,7 @@ you (phone) <-> Twilio <-> Anton on your laptop <-> OpenAI Realtime (the voice)
 - **Anton calls you** when Claude finishes, fails, or needs permission for something.
 - **You answer by voice.** "Yes, go ahead." "No, don't push." "What's it doing?" "Stop."
 - **Missed call?** Anton tries again every 15 minutes until you answer.
+- **Remembers you.** Anton keeps notes, a profile you can edit, and a short summary of every call, and uses them on the next call.
 - **Several Claude sessions.** Keep one session per piece of work ("resume", "porch-ui"), run them side by side, and pick up a Claude Code session you started in a terminal.
 - **Works with your other agents.** Connect Anton to a [porch](https://github.com/MNS1007/porch) hub and it reads what your other agents post, phones you when one of them needs you, and takes tasks you type on the hub. No phone needed for that part.
 
@@ -109,7 +110,26 @@ Set up Anton for me: https://github.com/MNS1007/anton
 - "What are my sessions doing?"
 - "Find my recent Claude Code sessions in the porch repo." / "Continue the second one as porch-ui."
 - "Start fresh in the resume session." (new Claude conversation)
+- "Remember that I'm off on Fridays." / "What do you remember about the job search?" / "Forget the dentist thing."
 - "That's all, bye."
+
+## Memory
+
+Anton keeps plain files in `~/.anton/memory`:
+
+| File | What is in it |
+| --- | --- |
+| `profile.md` | Anything Anton should always know about you. Edit it yourself |
+| `notes.jsonl` | Things you asked Anton to remember, and lasting facts it learned from what you said on calls |
+| `episodes.jsonl` | A short summary of each call |
+| `tasks.jsonl` | Every Claude task, which session ran it, and how it ended |
+| `calls/` | Full transcripts of each call |
+| `forgotten.jsonl` | What you asked it to forget, so it is not learned again |
+
+- At the start of every call Anton reads your profile, notes, recent calls and recent tasks. Claude gets your profile and notes with every task.
+- After a call, Anton writes a summary and picks out lasting facts. Facts only come from your own words, never from agent posts or updates Anton read to you.
+- "Forget ..." removes matching notes. Transcripts stay until you delete them from `calls/`.
+- Summaries are written by Claude (`MEMORY_MODEL`, default `haiku`) on your normal Claude plan.
 
 ## Sessions
 
@@ -163,6 +183,9 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `PERMISSION_MODE` | `acceptEdits` | Claude Code permission mode. Anything it would normally ask about is asked on the phone |
 | `ALLOWED_TOOLS` | empty | Extra tools Claude can use without asking, like `Bash(npm test)` |
 | `MAX_RUNNING` | `3` | Most sessions working at the same time |
+| `ANTON_HOME` | `~/.anton` | Where sessions and memory are kept |
+| `MEMORY_MODEL` | `haiku` | Claude model that writes call summaries |
+| `TRANSCRIBE_MODEL` | `gpt-4o-mini-transcribe` | OpenAI model that transcribes what you say |
 | `RETRY_MINUTES` | `15` | Wait between calls when you don't pick up |
 | `MAX_ATTEMPTS` | `0` | Stop calling after this many misses in a row. 0 means keep trying |
 | `QUIET_HOURS` | empty | No calls in this window, like `22-7`. Calls wait until it ends |
@@ -194,6 +217,8 @@ This only works from the laptop itself.
 - The audio stream address has a random secret that changes each time Anton starts.
 - Claude asks before anything your permission settings do not already allow. Anton only approves when you clearly say yes.
 - Anton will not read keys or passwords aloud.
+- Only you can make Anton act. On a call, Anton will not start a task, approve a permission, post to porch, change a session or change its memory unless you have spoken since the last update or agent post it read to you. On porch, only messages from `PORCH_BOSS` count.
+- Memory is stored as plain text on your laptop. Your profile and notes are sent to OpenAI at the start of every call and to Claude with every task, so keep secrets out of them.
 
 Anyone who can call from your number, or spoof it, can talk to Anton. Keep `PERMISSION_MODE` and `ALLOWED_TOOLS` as tight as you are comfortable with.
 
