@@ -139,6 +139,11 @@ export function handleCall(twilioWs) {
   let latestMediaTs = 0
   let responseStartTs = null
   let lastAssistantItem = null
+  // OpenAI sends audio faster than it plays, so Anton is still talking after
+  // response.done. Twilio echoes each mark when the audio before it has played.
+  let marksPending = 0
+  let markGen = 0 // bumped on each cut-off; Twilio echoes the marks it drops, and those are ignored
+  let itemSentMs = 0
   // Guardrail: actions need the user to have spoken after the latest outside message.
   let clock = 0
   let userTurn = 0
@@ -204,10 +209,15 @@ export function handleCall(twilioWs) {
   async function onAIEvent(ev) {
     switch (ev.type) {
       case 'response.output_audio.delta':
-        if (responseStartTs === null) responseStartTs = latestMediaTs
-        if (ev.item_id) lastAssistantItem = ev.item_id
+        if (ev.item_id && ev.item_id !== lastAssistantItem) {
+          lastAssistantItem = ev.item_id
+          responseStartTs = latestMediaTs
+          itemSentMs = 0
+        }
+        itemSentMs += Buffer.from(ev.delta, 'base64').length / 8 // 8 kHz mu-law: 8 bytes per ms
         sendTwilio({ event: 'media', streamSid, media: { payload: ev.delta } })
-        sendTwilio({ event: 'mark', streamSid, mark: { name: 'audio' } })
+        sendTwilio({ event: 'mark', streamSid, mark: { name: 'audio:' + markGen } })
+        marksPending++
         break
       case 'conversation.item.input_audio_transcription.completed':
         talk?.add('user', ev.transcript)
@@ -222,8 +232,6 @@ export function handleCall(twilioWs) {
         break
       case 'response.done':
         responseActive = false
-        responseStartTs = null
-        lastAssistantItem = null
         await onResponseDone(ev.response)
         break
       case 'error':
@@ -296,12 +304,14 @@ export function handleCall(twilioWs) {
   }
 
   function truncate() {
-    if (!lastAssistantItem || responseStartTs === null) return
-    const audioEndMs = Math.max(0, latestMediaTs - responseStartTs)
+    if (!lastAssistantItem || responseStartTs === null || marksPending === 0) return
+    const audioEndMs = Math.round(Math.min(Math.max(0, latestMediaTs - responseStartTs), itemSentMs))
     sendAI({ type: 'conversation.item.truncate', item_id: lastAssistantItem, content_index: 0, audio_end_ms: audioEndMs })
     sendTwilio({ event: 'clear', streamSid })
     lastAssistantItem = null
     responseStartTs = null
+    marksPending = 0
+    markGen++
   }
 
   twilioWs.on('message', raw => {
@@ -321,6 +331,11 @@ export function handleCall(twilioWs) {
         sendAI({ type: 'input_audio_buffer.append', audio: msg.media.payload })
         break
       case 'mark':
+        if (msg.mark?.name === 'audio:' + markGen && marksPending > 0 && --marksPending === 0 && !responseActive) {
+          // Everything Anton said has played; nothing left to cut off.
+          lastAssistantItem = null
+          responseStartTs = null
+        }
         if (msg.mark?.name === 'bye' && callSid) caller.hangUp(callSid)
         break
       case 'stop':
