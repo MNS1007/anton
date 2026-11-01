@@ -15,6 +15,30 @@ you (phone) <-> Twilio <-> Anton on your laptop <-> OpenAI Realtime (the voice)
 - **You answer by voice.** "Yes, go ahead." "No, don't push." "What's it doing?" "Stop."
 - **Missed call?** Anton tries again every 15 minutes until you answer.
 
+## Quick setup: paste this prompt
+
+Open Claude Code (or any coding agent) and paste this. It does the setup and tells you the few things only you can do.
+
+```
+Set up Anton for me: https://github.com/MNS1007/anton
+
+1. Clone the repo into a folder next to my other projects and run npm install.
+   Check that Node.js is 20.12 or newer and that Claude Code is logged in.
+2. Install cloudflared if it is missing (winget on Windows, brew on Mac).
+3. Walk me through the parts only I can do, one at a time, and wait for me:
+   - Twilio: sign up, buy a phone number with voice, and on a trial account
+     verify my own phone under Verified Caller IDs. Then I give you the
+     Account SID, Auth Token and the Twilio number.
+   - OpenAI: create an API key and give it to you.
+4. Copy .env.example to .env and fill it in. Ask me for: my phone number,
+   my name, the folder Claude should work in (WORK_DIR), and my quiet hours
+   (no calls at night). Use my laptop's time zone. Never print my keys back
+   to me or commit .env.
+5. Run npm run check-voice and fix anything that fails.
+6. Tell me how to start it with npm start and how to keep my laptop from
+   sleeping. Do not start it or place a call until I say so.
+```
+
 ## What you need
 
 - A laptop with [Claude Code](https://code.claude.com) installed and logged in
