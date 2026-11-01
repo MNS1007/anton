@@ -1,5 +1,6 @@
 // Checks the OpenAI Realtime setup without a phone call:
-// session settings accepted, a tool call made, and audio returned.
+// session settings accepted, a tool call made, audio returned, and the
+// caller's speech transcribed (Anton's memory keeps call transcripts).
 import WebSocket from 'ws'
 import { config } from '../src/config.js'
 
@@ -16,6 +17,8 @@ const send = o => ws.send(JSON.stringify(o))
 let audioBytes = 0
 let toolCalled = false
 let failed = false
+const audio = []
+let phase = 'talk'
 
 ws.on('open', () => {
   send({
@@ -26,7 +29,7 @@ ws.on('open', () => {
       output_modalities: ['audio'],
       instructions: 'You are a phone assistant. Be brief. Use get_status when asked what Claude is doing.',
       audio: {
-        input: { format: { type: 'audio/pcmu' }, turn_detection: { type: 'semantic_vad' } },
+        input: { format: { type: 'audio/pcmu' }, transcription: { model: config.transcribeModel }, turn_detection: null },
         output: { format: { type: 'audio/pcmu' }, voice: config.voice },
       },
       tools: [{ type: 'function', name: 'get_status', description: 'What Claude is doing now.', parameters: { type: 'object', properties: {} } }],
@@ -46,6 +49,13 @@ ws.on('message', raw => {
     console.log(`FAIL ${ev.error?.message}`)
   } else if (ev.type === 'response.output_audio.delta') {
     audioBytes += Buffer.from(ev.delta, 'base64').length
+    if (phase === 'talk') audio.push(ev.delta)
+  } else if (ev.type === 'conversation.item.input_audio_transcription.completed') {
+    console.log(`ok   heard: "${ev.transcript}"`)
+    finish(true)
+  } else if (ev.type === 'conversation.item.input_audio_transcription.failed') {
+    console.log(`FAIL transcription: ${ev.error?.message}`)
+    finish(false)
   } else if (ev.type === 'response.output_audio_transcript.done') {
     console.log(`ok   said: "${ev.transcript}"`)
   } else if (ev.type === 'response.done') {
@@ -57,12 +67,20 @@ ws.on('message', raw => {
       send({ type: 'response.create' })
       return
     }
-    const ok = !failed && toolCalled && audioBytes > 0
+    if (phase !== 'talk') return
     console.log(`${audioBytes > 0 ? 'ok  ' : 'FAIL'} audio returned: ${(audioBytes / 8000).toFixed(1)} s`)
-    console.log(ok ? 'Voice setup works.' : 'Voice setup has problems; see above.')
-    ws.close()
-    process.exit(ok ? 0 : 1)
+    // Play Anton's own reply back as if the caller said it, to test transcription.
+    phase = 'listen'
+    for (const chunk of audio) send({ type: 'input_audio_buffer.append', audio: chunk })
+    send({ type: 'input_audio_buffer.commit' })
   }
 })
+
+function finish(heard) {
+  const ok = !failed && toolCalled && audioBytes > 0 && heard
+  console.log(ok ? 'Voice setup works.' : 'Voice setup has problems; see above.')
+  ws.close()
+  process.exit(ok ? 0 : 1)
+}
 ws.on('error', err => { console.log(`FAIL ${err.message}`); process.exit(1) })
 setTimeout(() => { console.log('FAIL timed out'); process.exit(1) }, 30000)

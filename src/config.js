@@ -44,6 +44,7 @@ export const config = {
   openaiKey: env('OPENAI_API_KEY'),
   realtimeModel: env('REALTIME_MODEL', 'gpt-realtime-2.1'),
   voice: env('VOICE', 'cedar'),
+  transcribeModel: env('TRANSCRIBE_MODEL', 'gpt-4o-mini-transcribe'),
 
   workDir: resolve(expandHome(env('WORK_DIR', process.cwd()))),
   extraDirs: env('EXTRA_DIRS', '').split(/[;,]/).map(s => s.trim()).filter(Boolean).map(p => resolve(expandHome(p))),
