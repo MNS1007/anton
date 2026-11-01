@@ -61,6 +61,7 @@ export const config = {
 
   antonHome: resolve(expandHome(env('ANTON_HOME', '~/.anton'))),
   maxRunning: Number(env('MAX_RUNNING', 3)),
+  memoryModel: env('MEMORY_MODEL', 'haiku'),
 
   porchUrl: env('PORCH_URL', '').replace(/\/$/, ''),
   porchToken: env('PORCH_TOKEN'),

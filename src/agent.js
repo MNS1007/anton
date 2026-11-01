@@ -27,7 +27,10 @@ function systemNote(s) {
 let notify = () => {}
 export function onNotify(fn) { notify = fn }
 
-// Memory plugs in here so Claude knows the basics about the user.
+// Memory plugs in here: Claude gets the basics about the user, and every
+// finished task is logged.
+let finishFn = () => {}
+export function onFinish(fn) { finishFn = fn }
 let contextFn = () => ''
 export function setContext(fn) { contextFn = fn }
 
@@ -328,6 +331,7 @@ async function run(s, message, label, onDone) {
     if (done) report(done, result, null)
     else notify({ kind: 'done', session: s.name, task: s.task, text: `In the ${s.name} session, Claude finished "${s.task}". Its reply: ${clip(result, 3000)}` })
   }
+  try { finishFn({ session: s.name, task: s.task, result, failed: failed ? String(failed) : null, source: done ? 'porch' : 'call' }) } catch {}
   save()
   pump()
 }
