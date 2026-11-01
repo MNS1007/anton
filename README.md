@@ -31,7 +31,8 @@ Set up Anton for me: https://github.com/MNS1007/anton
      Account SID, Auth Token and the Twilio number.
    - OpenAI: create an API key and give it to you.
 4. Copy .env.example to .env and fill it in. Ask me for: my phone number,
-   my name, the folder Claude should work in (WORK_DIR), and my quiet hours
+   my name, the folder that holds all my repos (WORK_DIR, so Claude can reach any repo
+   and clone new ones there), and my quiet hours
    (no calls at night). Use my laptop's time zone. Never print my keys back
    to me or commit .env.
 5. Run npm run check-voice and fix anything that fails.
@@ -109,7 +110,8 @@ All settings live in `.env`. See `.env.example` for the full list.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `WORK_DIR` | where you start Anton | Folder Claude works in |
+| `WORK_DIR` | where you start Anton | Folder Claude works in. Use the folder that holds all your repos so Claude can reach any of them and clone new ones there |
+| `EXTRA_DIRS` | empty | More folders Claude may use, separated by `;` |
 | `PERMISSION_MODE` | `acceptEdits` | Claude Code permission mode. Anything it would normally ask about is asked on the phone |
 | `ALLOWED_TOOLS` | empty | Extra tools Claude can use without asking, like `Bash(npm test)` |
 | `RETRY_MINUTES` | `15` | Wait between calls when you don't pick up |

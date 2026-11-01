@@ -7,7 +7,8 @@ import { log } from './log.js'
 const VOICE_NOTE = `You are being driven by voice. The user is away from the laptop and talks to you through a phone assistant named ${config.assistantName}, who reads your replies aloud.
 - Keep your final reply short and speakable: what you did, what you found, what you need. No tables, no long code, no file dumps.
 - If you need the user to decide something, end your turn with one clear question. They will answer on the phone.
-- Never put secrets, keys or tokens in your reply.`
+- Never put secrets, keys or tokens in your reply.
+- Your working folder is ${config.workDir}. If it holds several repos, find the right one by name. To work on a repo that is not there yet, clone it into that folder (for example with gh repo clone).`
 
 let notify = () => {}
 export function onNotify(fn) { notify = fn }
@@ -96,6 +97,7 @@ async function run(message) {
       prompt: message,
       options: {
         cwd: config.workDir,
+        additionalDirectories: config.extraDirs,
         resume: state.sessionId || undefined,
         permissionMode: config.permissionMode,
         allowedTools: config.allowedTools,

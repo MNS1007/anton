@@ -41,6 +41,7 @@ export const config = {
   voice: env('VOICE', 'cedar'),
 
   workDir: resolve(expandHome(env('WORK_DIR', process.cwd()))),
+  extraDirs: env('EXTRA_DIRS', '').split(/[;,]/).map(s => s.trim()).filter(Boolean).map(p => resolve(expandHome(p))),
   permissionMode: env('PERMISSION_MODE', 'acceptEdits'),
   allowedTools: env('ALLOWED_TOOLS', '').split(/[ ,]+/).filter(Boolean),
 
