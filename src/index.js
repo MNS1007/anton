@@ -9,6 +9,7 @@ import * as caller from './caller.js'
 import { handleCall } from './bridge.js'
 import { startTunnel, pointNumberAt } from './tunnel.js'
 import * as hub from './hub.js'
+import * as memory from './memory.js'
 
 const { phone } = checkConfig()
 
@@ -18,6 +19,8 @@ function notify(notice) {
   if (hub.enabled) hub.relay(notice)
 }
 agent.onNotify(notify)
+agent.setContext(() => memory.context({ calls: false }))
+agent.onFinish(memory.logTask)
 
 // The media stream path carries a secret so only calls we answered can open it.
 const mediaToken = randomBytes(16).toString('hex')
