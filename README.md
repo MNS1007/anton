@@ -28,7 +28,7 @@ you (phone) <-> Twilio <-> Anton on your laptop <-> OpenAI Realtime (the voice)
 1. **Get the code**
 
    ```
-   git clone https://github.com/<you>/anton
+   git clone https://github.com/MNS1007/anton
    cd anton
    npm install
    ```
