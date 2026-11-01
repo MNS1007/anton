@@ -76,7 +76,7 @@ Set up Anton for me: https://github.com/MNS1007/anton
    cp .env.example .env
    ```
 
-   Fill in the Twilio values, your phone number, your OpenAI key and your name. Set `WORK_DIR` to the project you want Claude to work in.
+   Fill in the Twilio values, your phone number, your OpenAI key and your name. Set `WORK_DIR` to the folder that holds all your repos.
 
 5. **Check the voice setup** (no call made)
 
