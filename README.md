@@ -200,6 +200,22 @@ All settings live in `.env`. See `.env.example` for the full list.
 
 Claude also uses your normal Claude Code settings, CLAUDE.md files and allow rules.
 
+### Calls from every Claude Code session
+
+Anton can also call you about Claude Code sessions you run yourself in a terminal or editor: when one finishes a long piece of work, or stops to ask permission. Add this to `~/.claude/settings.json` (fix the path to where you cloned Anton):
+
+```json
+"hooks": {
+  "Stop": [{ "hooks": [{ "type": "command", "command": "node /path/to/anton/scripts/claude-hook.js", "timeout": 10, "async": true }] }],
+  "Notification": [{ "hooks": [{ "type": "command", "command": "node /path/to/anton/scripts/claude-hook.js", "timeout": 10, "async": true }] }]
+}
+```
+
+- A finished turn only counts if it ran at least 3 minutes (`ANTON_HOOK_MIN_MINUTES`), so quick back-and-forth at your desk does not ring your phone.
+- Permission prompts always count. Plain "waiting for input" notices do not.
+- Anton's own Claude sessions are skipped; they report to Anton directly.
+- If Anton is not running, the hook does nothing.
+
 ### Make Anton call you from anything else
 
 Anton listens on your laptop for local updates. Any script or hook can make it call you:
