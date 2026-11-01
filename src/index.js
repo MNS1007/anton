@@ -7,6 +7,8 @@ import { log } from './log.js'
 import * as agent from './agent.js'
 import * as caller from './caller.js'
 import { handleCall } from './bridge.js'
+import { handleLiveCall } from './live.js'
+import * as sip from './sip.js'
 import { startTunnel, pointNumberAt } from './tunnel.js'
 import * as hub from './hub.js'
 import * as memory from './memory.js'
@@ -69,6 +71,11 @@ const server = http.createServer(async (req, res) => {
     return res.end(twiml.toString())
   }
 
+  // OpenAI calls this when a call reaches it over SIP. Checked by its signature.
+  if (config.openaiWebhookSecret && url.pathname === '/live/incoming' && req.method === 'POST') {
+    return send(res, await sip.onWebhook(req.headers, body).catch(err => { log(`SIP webhook: ${err.message}`); return 500 }), '')
+  }
+
   if (url.pathname === '/health') return isLocal(req) ? send(res, 200, JSON.stringify(agent.status())) : send(res, 403, 'forbidden')
   send(res, 404, 'not found')
 })
@@ -76,7 +83,7 @@ const server = http.createServer(async (req, res) => {
 const wss = new WebSocketServer({ noServer: true })
 server.on('upgrade', (req, socket, head) => {
   if (req.url !== `/media/${mediaToken}`) return socket.destroy()
-  wss.handleUpgrade(req, socket, head, ws => handleCall(ws))
+  wss.handleUpgrade(req, socket, head, ws => (config.voiceEngine === 'live' ? handleLiveCall : handleCall)(ws))
 })
 
 server.listen(config.port, '127.0.0.1', async () => {
