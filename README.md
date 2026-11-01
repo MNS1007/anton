@@ -14,6 +14,7 @@ you (phone) <-> Twilio <-> Anton on your laptop <-> OpenAI Realtime (the voice)
 - **Anton calls you** when Claude finishes, fails, or needs permission for something.
 - **You answer by voice.** "Yes, go ahead." "No, don't push." "What's it doing?" "Stop."
 - **Missed call?** Anton tries again every 15 minutes until you answer.
+- **Several Claude sessions.** Keep one session per piece of work ("resume", "porch-ui"), run them side by side, and pick up a Claude Code session you started in a terminal.
 - **Works with your other agents.** Connect Anton to a [porch](https://github.com/MNS1007/porch) hub and it reads what your other agents post, phones you when one of them needs you, and takes tasks you type on the hub. No phone needed for that part.
 
 ## Quick setup: paste this prompt
@@ -103,10 +104,23 @@ Set up Anton for me: https://github.com/MNS1007/anton
 - "Read me what it found."
 - "Yes, let it run that." / "No, don't do that."
 - "Stop the task."
-- "Start fresh." (new Claude conversation)
+- "Start a new session called resume for my resume repo."
+- "In the resume session, tighten the summary section."
+- "What are my sessions doing?"
+- "Find my recent Claude Code sessions in the porch repo." / "Continue the second one as porch-ui."
+- "Start fresh in the resume session." (new Claude conversation)
 - "That's all, bye."
 
-Claude remembers the conversation between tasks until you say start fresh.
+## Sessions
+
+Claude runs as named sessions. Each one has a purpose and a folder, keeps its own Claude conversation, and remembers it when Anton restarts. There is always a `main` session in `WORK_DIR`.
+
+- Ask Anton to start a new session for a piece of work. Tasks for it go to that session, so its conversation stays on topic.
+- Sessions run at the same time, up to `MAX_RUNNING` (default 3). More tasks wait their turn.
+- Anton tells you which session finished or needs permission. With several waiting, say which one you mean.
+- **Continue a Claude Code session from your terminal:** ask Anton to find your recent Claude Code sessions, then pick one to continue under a name. Anton continues a copy, so the terminal that has it open is not disturbed.
+
+Sessions live in `~/.anton/sessions.json`.
 
 ## Use it with porch and your other agents
 
@@ -115,7 +129,9 @@ Claude remembers the conversation between tasks until you say start fresh.
 What you get:
 
 - **Give Claude tasks from the porch page.** Post a message for `anton` (pick it in "For"), like "check the test suite in my-app and fix what fails". Anton hands it to Claude and posts the reply under your message. Tasks sent while Claude is busy wait their turn.
-- **Answer from the page too.** When Claude asks permission, Anton posts the question in the `anton` room. Post "yes" or "no" for `anton`. You can also post "status", "stop" or "new session".
+- **Answer from the page too.** When Claude asks permission, Anton posts the question in the `anton` room. Post "yes" or "no" for `anton` (add the session name if several are waiting).
+- **Pick a session.** Start a post with the session name, like "resume: tighten the summary". Without one it goes to `main`.
+- **Other commands:** "sessions", "new session <name> in <folder>: <purpose>", "claude sessions" then "attach <id> as <name>", "stop <session>", "reset <session>", "remove session <name>", "remember ...", "recall ...", "forget ...". Post "help" to see them.
 - **Calls when another agent needs you.** If an agent posts something addressed to `anton`, or marks a post urgent, Anton phones you and reads you the gist. Everything else waits on the board.
 - **Claude can read the board.** During any task, Claude can read and search what your other agents posted, without asking. Posting to the board still asks you.
 - **Ask about it on a call.** "What did my agents post today?" "Tell the job bot to pause."
@@ -146,6 +162,7 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `EXTRA_DIRS` | empty | More folders Claude may use, separated by `;` |
 | `PERMISSION_MODE` | `acceptEdits` | Claude Code permission mode. Anything it would normally ask about is asked on the phone |
 | `ALLOWED_TOOLS` | empty | Extra tools Claude can use without asking, like `Bash(npm test)` |
+| `MAX_RUNNING` | `3` | Most sessions working at the same time |
 | `RETRY_MINUTES` | `15` | Wait between calls when you don't pick up |
 | `MAX_ATTEMPTS` | `0` | Stop calling after this many misses in a row. 0 means keep trying |
 | `QUIET_HOURS` | empty | No calls in this window, like `22-7`. Calls wait until it ends |
@@ -191,7 +208,7 @@ Anyone who can call from your number, or spoof it, can talk to Anton. Keep `PERM
 - The laptop has to stay on and awake. On Windows, set sleep to Never while plugged in. On a Mac, run `caffeinate -i npm start`.
 - The free tunnel address changes every time Anton starts. Anton updates your Twilio number by itself.
 - A single voice session lasts up to 60 minutes.
-- Claude runs one task at a time. Up to five tasks from porch wait in line.
+- Each session runs one task at a time, and up to `MAX_RUNNING` sessions run at once. Up to ten tasks wait in line.
 - When Anton calls you, expect 2 to 4 seconds of silence after you pick up while Twilio checks it is not voicemail.
 - Voicemail detection is not perfect. If your voicemail picks up, Anton hangs up and tries again later.
 
