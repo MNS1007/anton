@@ -4,6 +4,7 @@ import { config } from './config.js'
 import { log } from './log.js'
 import * as agent from './agent.js'
 import * as caller from './caller.js'
+import * as hub from './hub.js'
 
 const name = config.assistantName
 const user = config.userName
@@ -46,6 +47,35 @@ const TOOLS = [
     description: 'Start a fresh Claude conversation for the next task, forgetting the earlier one.',
     parameters: { type: 'object', properties: {} },
   },
+  ...(hub.enabled ? [
+    {
+      type: 'function',
+      name: 'hub_read',
+      description: `Read recent messages from porch, the board where ${config.userName}'s other agents post. Use it when they ask what the agents said or found.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          room: { type: 'string', description: 'Only this room, for example jobs or research' },
+          for_me: { type: 'boolean', description: 'Only messages addressed to you' },
+          limit: { type: 'integer', description: 'How many, default 8' },
+        },
+      },
+    },
+    {
+      type: 'function',
+      name: 'hub_post',
+      description: `Post a message on porch for the other agents. Only when ${config.userName} asks you to.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string' },
+          room: { type: 'string', description: 'Default general' },
+          to: { type: 'array', items: { type: 'string' }, description: 'Agent names it is for' },
+        },
+        required: ['text'],
+      },
+    },
+  ] : []),
   {
     type: 'function',
     name: 'end_call',
@@ -61,7 +91,8 @@ function instructions(updates) {
     : `${user} called you. Greet them in a few words and ask what they need.`
   return `You are ${name}, a phone assistant for ${user}. You sit between ${user} and Claude Code, an AI coding agent running on their laptop in ${s.workDir}.
 You do not do the work yourself. You pass tasks to Claude with ask_claude, check on it with get_status, and relay what it says.
-
+${hub.enabled ? `${user}'s other agents post on a shared board called porch. Read it with hub_read when asked, and summarize it in a sentence or two per agent.
+` : ''}
 How to talk:
 - Short, plain spoken sentences. One to three at a time. No lists, no markdown, no reading code or file paths character by character.
 - Summarize Claude's replies; never read them out in full unless asked.
@@ -176,7 +207,7 @@ export function handleCall(twilioWs) {
     for (const c of calls) {
       let args = {}
       try { args = JSON.parse(c.arguments || '{}') } catch {}
-      const output = runTool(c.name, args)
+      const output = await runTool(c.name, args)
       log(`tool ${c.name}`)
       sendAI({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id, output: JSON.stringify(output) } })
     }
@@ -188,7 +219,17 @@ export function handleCall(twilioWs) {
     if (responseQueued) { responseQueued = false; requestResponse() }
   }
 
-  function runTool(toolName, args) {
+  async function runTool(toolName, args) {
+    if (toolName === 'hub_read' || toolName === 'hub_post') {
+      try {
+        if (toolName === 'hub_read') return await hub.recent({ room: args.room, forMe: !!args.for_me, limit: args.limit })
+        const to = Array.isArray(args.to) ? args.to : []
+        const m = await hub.post({ text: String(args.text || ''), room: args.room || 'general', to })
+        return { ok: true, id: m.id }
+      } catch (err) {
+        return { ok: false, reason: err.message }
+      }
+    }
     switch (toolName) {
       case 'ask_claude': return agent.ask(String(args.message || ''))
       case 'get_status': return agent.status()

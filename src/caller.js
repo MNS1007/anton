@@ -5,7 +5,8 @@ import { config } from './config.js'
 import { log } from './log.js'
 import * as agent from './agent.js'
 
-const client = twilio(config.twilioSid, config.twilioToken)
+let twilioClient = null
+const client = () => (twilioClient ??= twilio(config.twilioSid, config.twilioToken))
 
 let queue = []          // updates not yet heard by the user
 let active = null       // live call bridge: { inject(text), callSid }
@@ -13,6 +14,7 @@ let outbound = null     // { sid, connected }
 let retryTimer = null
 let attempts = 0
 
+// ring: false keeps the update for the next call without placing one.
 export function notify(notice) {
   log(`update: ${notice.kind}`)
   if (active) {
@@ -20,7 +22,7 @@ export function notify(notice) {
     return
   }
   queue.push(notice.text)
-  if (!outbound && !retryTimer) placeCall()
+  if (notice.ring !== false && !outbound && !retryTimer) placeCall()
 }
 
 // Called by the bridge when a call connects. Returns what to tell the user first.
@@ -84,7 +86,7 @@ async function placeCall() {
   }
   attempts++
   try {
-    const call = await client.calls.create({
+    const call = await client().calls.create({
       to: config.myNumber,
       from: config.twilioNumber,
       url: `${config.publicUrl}/voice`,
@@ -102,7 +104,7 @@ async function placeCall() {
 }
 
 export async function hangUp(callSid) {
-  try { await client.calls(callSid).update({ status: 'completed' }) } catch (err) { log(`hang up failed: ${err.message}`) }
+  try { await client().calls(callSid).update({ status: 'completed' }) } catch (err) { log(`hang up failed: ${err.message}`) }
 }
 
 // QUIET_HOURS like "22-7" means no calls from 22:00 to 07:00 local time.

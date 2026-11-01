@@ -8,9 +8,16 @@ import * as agent from './agent.js'
 import * as caller from './caller.js'
 import { handleCall } from './bridge.js'
 import { startTunnel, pointNumberAt } from './tunnel.js'
+import * as hub from './hub.js'
 
-checkConfig()
-agent.onNotify(caller.notify)
+const { phone } = checkConfig()
+
+// Updates go to the phone, and to porch when it is set up.
+function notify(notice) {
+  if (phone) caller.notify(notice)
+  if (hub.enabled) hub.relay(notice)
+}
+agent.onNotify(notify)
 
 // The media stream path carries a secret so only calls we answered can open it.
 const mediaToken = randomBytes(16).toString('hex')
@@ -25,11 +32,11 @@ const server = http.createServer(async (req, res) => {
     if (!isLocal(req)) return send(res, 403, 'forbidden')
     let text = body
     try { text = JSON.parse(body).message || body } catch {}
-    caller.notify({ kind: 'note', text: String(text).slice(0, 2000) })
+    notify({ kind: 'note', text: String(text).slice(0, 2000) })
     return send(res, 200, 'ok')
   }
 
-  if (url.pathname === '/voice' || url.pathname === '/status') {
+  if (phone && (url.pathname === '/voice' || url.pathname === '/status')) {
     const params = Object.fromEntries(new URLSearchParams(body))
     const signature = req.headers['x-twilio-signature']
     if (!twilio.validateRequest(config.twilioToken, signature, config.publicUrl + req.url, params)) {
@@ -72,14 +79,18 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(config.port, '127.0.0.1', async () => {
   log(`listening on http://127.0.0.1:${config.port}`)
   try {
-    if (!config.publicUrl) config.publicUrl = await startTunnel(config.port)
-    log(`public url: ${config.publicUrl}`)
-    if (config.setWebhook) await pointNumberAt(`${config.publicUrl}/voice`)
+    if (phone) {
+      if (!config.publicUrl) config.publicUrl = await startTunnel(config.port)
+      log(`public url: ${config.publicUrl}`)
+      if (config.setWebhook) await pointNumberAt(`${config.publicUrl}/voice`)
+    }
+    if (hub.enabled) await hub.start(phone ? caller.notify : null)
   } catch (err) {
     log(`setup failed: ${err.message}`)
     process.exit(1)
   }
-  log(`${config.assistantName} is ready. Call ${config.twilioNumber}, or let it call you.`)
+  if (phone) log(`${config.assistantName} is ready. Call ${config.twilioNumber}, or let it call you.`)
+  if (hub.enabled) log(`On porch, post a message for ${config.porchBoss === 'me' ? 'Anton' : config.assistantName} to give Claude a task.`)
   log(`Claude works in ${config.workDir} (permission mode: ${config.permissionMode})`)
 })
 
