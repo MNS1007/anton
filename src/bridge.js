@@ -163,8 +163,8 @@ export function handleCall(twilioWs) {
           output_modalities: ['audio'],
           instructions: instructions(updates),
           audio: {
-            input: { format: { type: 'audio/pcmu', rate: 8000 }, turn_detection: { type: 'semantic_vad' } },
-            output: { format: { type: 'audio/pcmu', rate: 8000 }, voice: config.voice },
+            input: { format: { type: 'audio/pcmu' }, turn_detection: { type: 'semantic_vad' } },
+            output: { format: { type: 'audio/pcmu' }, voice: config.voice },
           },
           tools: TOOLS,
           tool_choice: 'auto',

@@ -26,8 +26,8 @@ ws.on('open', () => {
       output_modalities: ['audio'],
       instructions: 'You are a phone assistant. Be brief. Use get_status when asked what Claude is doing.',
       audio: {
-        input: { format: { type: 'audio/pcmu', rate: 8000 }, turn_detection: { type: 'semantic_vad' } },
-        output: { format: { type: 'audio/pcmu', rate: 8000 }, voice: config.voice },
+        input: { format: { type: 'audio/pcmu' }, turn_detection: { type: 'semantic_vad' } },
+        output: { format: { type: 'audio/pcmu' }, voice: config.voice },
       },
       tools: [{ type: 'function', name: 'get_status', description: 'What Claude is doing now.', parameters: { type: 'object', properties: {} } }],
       tool_choice: 'auto',
