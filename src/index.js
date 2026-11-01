@@ -59,7 +59,7 @@ const server = http.createServer(async (req, res) => {
     return res.end(twiml.toString())
   }
 
-  if (url.pathname === '/health') return send(res, 200, JSON.stringify(agent.status()))
+  if (url.pathname === '/health') return isLocal(req) ? send(res, 200, JSON.stringify(agent.status())) : send(res, 403, 'forbidden')
   send(res, 404, 'not found')
 })
 
