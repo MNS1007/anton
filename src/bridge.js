@@ -9,44 +9,28 @@ import * as hub from './hub.js'
 const name = config.assistantName
 const user = config.userName
 
+const fn = (name, description, properties = {}, required = []) =>
+  ({ type: 'function', name, description, parameters: { type: 'object', properties, required } })
+const session = { type: 'string', description: 'Session name. Leave out for the session you last talked about, or main' }
+
 const TOOLS = [
-  {
-    type: 'function',
-    name: 'ask_claude',
-    description: 'Send a task or a follow-up message to Claude Code on the laptop. Write it as a clear, complete instruction in the user\'s own words. Claude remembers earlier messages in this session.',
-    parameters: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'] },
-  },
-  {
-    type: 'function',
-    name: 'get_status',
-    description: 'What Claude is doing now, its latest update, its last result, and any permission it is waiting for.',
-    parameters: { type: 'object', properties: {} },
-  },
-  {
-    type: 'function',
-    name: 'answer_permission',
-    description: 'Answer the permission request Claude is waiting on. Only approve if the user clearly said yes to this exact request.',
-    parameters: {
-      type: 'object',
-      properties: {
-        approve: { type: 'boolean' },
-        note: { type: 'string', description: 'Optional reason or instruction to pass to Claude, mainly when denying.' },
-      },
-      required: ['approve'],
-    },
-  },
-  {
-    type: 'function',
-    name: 'stop_task',
-    description: 'Stop the task Claude is working on.',
-    parameters: { type: 'object', properties: {} },
-  },
-  {
-    type: 'function',
-    name: 'new_session',
-    description: 'Start a fresh Claude conversation for the next task, forgetting the earlier one.',
-    parameters: { type: 'object', properties: {} },
-  },
+  fn('ask_claude', 'Send a task or follow-up to Claude Code in one session. Write it as a clear, complete instruction in the words the user used. Each session remembers its earlier messages.',
+    { message: { type: 'string' }, session }, ['message']),
+  fn('get_status', 'What each session is doing, its latest update and last result, and any permission it waits for. Give a session name for just that one.', { session }),
+  fn('answer_permission', 'Answer a permission request. Only approve if the user clearly said yes to this exact request. Give the session when more than one is waiting.',
+    { approve: { type: 'boolean' }, note: { type: 'string', description: 'Optional reason or instruction for Claude, mainly when denying' }, session }, ['approve']),
+  fn('stop_task', 'Stop the task a session is working on.', { session }),
+  fn('create_session', 'Start a new named Claude Code session for a piece of work, so tasks for it stay together. Use when the user asks for a new or separate session.',
+    {
+      name: { type: 'string', description: 'Short name, like resume or porch-ui' },
+      purpose: { type: 'string', description: 'What it is for, in a few words' },
+      folder: { type: 'string', description: `Folder to work in: a repo name inside ${config.workDir}, or a full path. Leave out for ${config.workDir}` },
+    }, ['name', 'purpose']),
+  fn('find_claude_sessions', 'List Claude Code sessions saved on the laptop, newest first, so the user can continue one of them.',
+    { folder: { type: 'string', description: 'Only sessions from this folder or repo' } }),
+  fn('attach_session', 'Continue a saved Claude Code session (from find_claude_sessions) under a name. It continues as a copy, so an open terminal is not disturbed.',
+    { name: { type: 'string' }, purpose: { type: 'string' }, claude_session_id: { type: 'string' } }, ['name', 'claude_session_id']),
+  fn('reset_session', 'Give a session a fresh Claude conversation, forgetting the earlier one. Its name, purpose and folder stay.', { session }),
   ...(hub.enabled ? [
     {
       type: 'function',
@@ -84,13 +68,21 @@ const TOOLS = [
   },
 ]
 
+function sessionLines() {
+  return agent.list().map(s => {
+    const state = s.waitingForPermission ? `waiting for permission to ${s.waitingForPermission}`
+      : s.running ? `working on "${s.task}" for ${s.minutesRunning} min` : 'idle'
+    return `- ${s.name}${s.purpose ? ` (${s.purpose})` : ''}: ${state}`
+  }).join('\n')
+}
+
 function instructions(updates) {
-  const s = agent.status()
   const opening = updates.length
     ? `You placed or picked up this call because of these updates. Tell ${user} the gist in one or two short sentences, then ask what they want to do:\n- ${updates.join('\n- ')}`
     : `${user} called you. Greet them in a few words and ask what they need.`
-  return `You are ${name}, a phone assistant for ${user}. You sit between ${user} and Claude Code, an AI coding agent running on their laptop in ${s.workDir}.
+  return `You are ${name}, a phone assistant for ${user}. You sit between ${user} and Claude Code, an AI coding agent running on their laptop in ${config.workDir}.
 You do not do the work yourself. You pass tasks to Claude with ask_claude, check on it with get_status, and relay what it says.
+Claude runs as named sessions, each for one piece of work. Send each task to the session it belongs to. If none fits and the work is separate, offer to create one. Say the session name when you report back if there is more than one.
 ${hub.enabled ? `${user}'s other agents post on a shared board called porch. Read it with hub_read when asked, and summarize it in a sentence or two per agent.
 ` : ''}
 Who you take orders from:
@@ -106,7 +98,8 @@ Permissions:
 - When Claude asks permission, say in plain words what it wants to do and ask yes or no.
 - Call answer_permission with approve true only if ${user} clearly says yes to that request. Anything unclear is a no or a question back.
 
-Claude right now: ${s.running ? `working on "${s.task}" for ${s.minutesRunning} min.` : 'idle.'}${s.waitingForPermission ? ` It is waiting for permission to ${s.waitingForPermission}` : ''}
+Sessions right now:
+${sessionLines()}
 
 ${opening}`
 }
@@ -230,7 +223,12 @@ export function handleCall(twilioWs) {
   }
 
   // Tools that act for the user. They only run on something the user said.
-  const ACTIONS = ['ask_claude', 'answer_permission', 'hub_post', 'new_session']
+  const ACTIONS = ['ask_claude', 'answer_permission', 'hub_post', 'create_session', 'attach_session', 'reset_session']
+
+  // Follow-ups go to the session last talked about on this call.
+  let lastSession = null
+  const pick = name => name || lastSession || 'main'
+  const remember = r => { if (r?.ok && (r.session || r.name)) lastSession = r.session || r.name; return r }
 
   async function runTool(toolName, args) {
     if (ACTIONS.includes(toolName) && outsideTurn > userTurn) {
@@ -251,11 +249,14 @@ export function handleCall(twilioWs) {
       }
     }
     switch (toolName) {
-      case 'ask_claude': return agent.ask(String(args.message || ''))
-      case 'get_status': return agent.status()
-      case 'answer_permission': return agent.answerPermission(!!args.approve, args.note)
-      case 'stop_task': return agent.stop()
-      case 'new_session': return agent.newSession()
+      case 'ask_claude': return remember(agent.ask(String(args.message || ''), { session: pick(args.session) }))
+      case 'get_status': return args.session ? agent.status(args.session) : agent.status()
+      case 'answer_permission': return remember(agent.answerPermission(!!args.approve, args.note, args.session))
+      case 'stop_task': return remember(agent.stop(args.session || undefined))
+      case 'create_session': return remember(agent.createSession({ name: args.name, purpose: args.purpose, folder: args.folder }))
+      case 'find_claude_sessions': return { sessions: await agent.findClaudeSessions({ folder: args.folder }) }
+      case 'attach_session': return remember(await agent.attachSession({ name: args.name, purpose: args.purpose, claudeSessionId: String(args.claude_session_id || '') }))
+      case 'reset_session': return remember(agent.resetSession(pick(args.session)))
       case 'end_call': hangupPending = true; return { ok: true, note: 'Say a short goodbye now.' }
       default: return { ok: false, reason: `unknown tool ${toolName}` }
     }
