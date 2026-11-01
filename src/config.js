@@ -45,6 +45,15 @@ export const config = {
   realtimeModel: env('REALTIME_MODEL', 'gpt-realtime-2.1'),
   voice: env('VOICE', 'cedar'),
   transcribeModel: env('TRANSCRIBE_MODEL', 'gpt-4o-mini-transcribe'),
+  // realtime: gpt-realtime over the Twilio media stream (default).
+  // live: GPT-Live, OpenAI's full-duplex model, over the same media stream.
+  // Calls that reach OpenAI over SIP always use GPT-Live (see src/sip.js).
+  voiceEngine: env('VOICE_ENGINE', 'realtime'),
+  liveModel: env('LIVE_MODEL', 'gpt-live-1'),
+  liveVoice: env('LIVE_VOICE', 'marin'),
+  liveBackendModel: env('LIVE_BACKEND_MODEL', 'gpt-5.5'),
+  liveUrl: env('LIVE_URL', 'https://api.openai.com/v1/live/sessions').replace(/\/$/, ''),
+  openaiWebhookSecret: env('OPENAI_WEBHOOK_SECRET'),
 
   workDir: resolve(expandHome(env('WORK_DIR', process.cwd()))),
   extraDirs: env('EXTRA_DIRS', '').split(/[;,]/).map(s => s.trim()).filter(Boolean).map(p => resolve(expandHome(p))),
