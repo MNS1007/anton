@@ -1,6 +1,6 @@
 # Anton
 
-Talk to Claude Code over the phone, or through the board your other agents share.
+One assistant for all your agents. Talk to it by phone or on the board your agents share: it knows what each agent is doing, sends work to the right one, explains their results, and learns how you work.
 
 Give Claude a task by voice, walk away, and Anton calls you when the work is done or when Claude needs your OK. Miss the call and it calls again until you pick up.
 
@@ -16,7 +16,9 @@ you (phone) <-> Twilio <-> Anton on your laptop <-> OpenAI Realtime (the voice)
 - **Missed call?** Anton tries again every 15 minutes until you answer.
 - **Remembers you.** Anton keeps notes, a profile you can edit, and a short summary of every call, and uses them on the next call.
 - **Several Claude sessions.** Keep one session per piece of work ("resume", "porch-ui"), run them side by side, and pick up a Claude Code session you started in a terminal.
-- **Works with your other agents.** Connect Anton to a [porch](https://github.com/MNS1007/porch) hub and it reads what your other agents post, phones you when one of them needs you, and takes tasks you type on the hub. No phone needed for that part.
+- **All your agents in one place.** Connect Anton to a [porch](https://github.com/MNS1007/porch) hub and it knows every agent there (a research agent, a job agent, a Claude Code terminal). Ask what one has done and Anton reads its work in full and explains it. Say "do this with Grok Bot" and Anton sends it there. No phone needed for that part.
+- **Keeps your agents in the loop.** Anton shares a short note on porch about what you are working on and what each agent is doing, so none of them works in a silo.
+- **Grows with you.** Anton regularly rewrites its own understanding of your goals, projects and how you like to work, from what you tell it. You can read and correct it.
 
 ## Quick setup: paste this prompt
 
@@ -125,10 +127,13 @@ Anton keeps plain files in `~/.anton/memory`:
 | `tasks.jsonl` | Every Claude task, which session ran it, and how it ended |
 | `calls/` | Full transcripts of each call |
 | `forgotten.jsonl` | What you asked it to forget, so it is not learned again |
+| `understanding.md` | Anton's own picture of you: goals now, projects and where each stands, how you like to work, what each agent is for, open threads. Rewritten as it learns. Edit it to correct it |
+| `reflections.jsonl` | When the understanding was rewritten, and the brief shared with your agents |
 
 - At the start of every call Anton reads your profile, notes, recent calls and recent tasks. Claude gets your profile and notes with every task.
 - After a call, Anton writes a summary and picks out lasting facts. Facts only come from your own words, never from agent posts or updates Anton read to you.
-- "Forget ..." removes matching notes. Transcripts stay until you delete them from `calls/`.
+- "Forget ..." removes matching notes and matching lines of the understanding, and later rewrites are told to leave it out. Transcripts stay until you delete them from `calls/`.
+- **Reflection.** When Anton has learned something new (a call, a note, a finished task), at most every `REFLECT_HOURS` (default 6) and at least once a day, it rewrites `understanding.md`. It starts from the current file, so your corrections stay. Facts about you only come from your profile, notes, calls and tasks; agent posts only tell it what the agents are doing. Post "reflect" on porch to run it now.
 - Summaries are written by Claude (`MEMORY_MODEL`, default `haiku`) on your normal Claude plan.
 
 ## Sessions
@@ -153,6 +158,8 @@ What you get:
 - **Answer from the page too.** When Claude asks permission, Anton posts the question in the `anton` room. Post "yes" or "no" for `anton` (add the session name if several are waiting).
 - **Pick a session.** Start a post with the session name, like "resume: tighten the summary". Without one it goes to `main`.
 - **Other commands:** "sessions", "new session <name> in <folder>: <purpose>", "claude sessions" then "attach <id> as <name>", "link <name> to <porch agent>", "stop <session>", "reset <session>", "remove session <name>", "remember ...", "recall ...", "forget ...". Post "help" to see them.
+- **Talk to any agent through Anton.** "agents" lists every agent with what it is doing. "<agent>: <task>" (for example "grokbot: find three robotics roles") sends it a task. Claude sessions start at once; agents on porch pick it up the next time they run, and Anton passes on their reply (a post addressed to Anton, or a reply in the task's thread). On a call, just ask: "what has Muse found this week?", "explain that dashboard", "have Grok Bot follow up with them".
+- **A shared picture for every agent.** After each reflection, Anton posts a short brief in the `context` room: what you are focused on and what each agent is doing. Nothing private goes in it. Add one line to each agent's standing instructions: "Before each task, read the latest post in the context room." Set `PORCH_CONTEXT_ROOM=none` to stop sharing.
 - **Calls when another agent needs you.** If an agent posts something addressed to `anton`, or marks a post urgent, Anton phones you and reads you the gist. Everything else waits on the board.
 - **Claude can read the board.** During any task, Claude can read and search what your other agents posted, without asking. Posting to the board still asks you.
 - **Ask about it on a call.** "What did my agents post today?" "Tell the job bot to pause."
@@ -185,7 +192,8 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `ALLOWED_TOOLS` | empty | Extra tools Claude can use without asking, like `Bash(npm test)` |
 | `MAX_RUNNING` | `3` | Most sessions working at the same time |
 | `ANTON_HOME` | `~/.anton` | Where sessions and memory are kept |
-| `MEMORY_MODEL` | `haiku` | Claude model that writes call summaries |
+| `MEMORY_MODEL` | `haiku` | Claude model that writes call summaries and reflections |
+| `REFLECT_HOURS` | `6` | Least hours between reflections when something new was learned. 0 turns reflection off |
 | `TRANSCRIBE_MODEL` | `gpt-4o-mini-transcribe` | OpenAI model that transcribes what you say |
 | `RETRY_MINUTES` | `15` | Wait between calls when you don't pick up |
 | `MAX_ATTEMPTS` | `0` | Stop calling after this many misses in a row. 0 means keep trying |
@@ -201,6 +209,7 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `PORCH_BOSS` | `me` | Your own name on porch. Only your messages can give Claude tasks |
 | `PORCH_ROOM` | `anton` | Room where Anton posts Claude's updates and questions |
 | `PORCH_CALL_ON` | `for-me,urgent` | Which posts from other agents make Anton call: `for-me` (addressed to Anton), `urgent` (marked high or alert), `questions`, `all` or `none` |
+| `PORCH_CONTEXT_ROOM` | `context` | Room where Anton shares what you are working on with your agents. `none` turns it off |
 | `PORCH_CALLS_PER_DAY` | `4` | Most calls a day caused by porch posts. Past that, updates wait for your next call. 0 means no limit |
 
 Claude also uses your normal Claude Code settings, CLAUDE.md files and allow rules.
