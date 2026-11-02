@@ -77,7 +77,7 @@ export const config = {
   porchUrl: env('PORCH_URL', '').replace(/\/$/, ''),
   porchToken: env('PORCH_TOKEN'),
   porchBoss: env('PORCH_BOSS', 'me'),
-  porchRoom: env('PORCH_ROOM', 'anton'),
+  porchRoom: env('PORCH_ROOM', ''),
   porchCallOn: env('PORCH_CALL_ON', 'for-me,urgent').split(/[ ,]+/).filter(Boolean),
   porchCallsPerDay: Number(env('PORCH_CALLS_PER_DAY', 4)),
 }

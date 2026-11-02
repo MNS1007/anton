@@ -207,7 +207,7 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `PORCH_URL` | empty | Address of your porch hub. Empty turns porch off |
 | `PORCH_TOKEN` | empty | Anton's porch token |
 | `PORCH_BOSS` | `me` | Your own name on porch. Only your messages can give Claude tasks |
-| `PORCH_ROOM` | `anton` | Room where Anton posts Claude's updates and questions |
+| `PORCH_ROOM` | empty | Where Anton posts Claude's updates and questions. Empty means your DM with Anton |
 | `PORCH_CALL_ON` | `for-me,urgent` | Which posts from other agents make Anton call: `for-me` (addressed to Anton), `urgent` (marked high or alert), `questions`, `all` or `none` |
 | `PORCH_CALLS_PER_DAY` | `4` | Most calls a day caused by porch posts. Past that, updates wait for your next call. 0 means no limit |
 

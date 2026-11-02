@@ -60,15 +60,16 @@ export async function start(notify) {
   phoneNotify = notify
   me = await call('/v1/me')
   log(`connected to porch as ${me.name}`)
-  agent.onAgentPost(msg => post({ room: config.porchRoom, ...msg }))
+  agent.onAgentPost(msg => post(msg))
   watch().catch(err => log(`porch watcher stopped: ${err.message}`))
 }
 
-// Anton's own news (Claude finished, failed or needs permission) goes on the hub too.
+// Anton's own news (Claude finished, failed or needs permission) goes on the hub
+// too: in the user's DM with Anton, unless PORCH_ROOM names a room.
 export function relay(notice) {
   const kinds = { permission: 'question', failed: 'alert', done: 'note' }
   post({
-    room: config.porchRoom,
+    ...(config.porchRoom ? { room: config.porchRoom } : { dm: config.porchBoss }),
     kind: kinds[notice.kind] || 'note',
     priority: notice.kind === 'permission' ? 'high' : 'normal',
     to: [config.porchBoss],
