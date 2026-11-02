@@ -27,7 +27,11 @@ export function sessionConfig(updates, { sip = false } = {}) {
     model: config.liveModel,
     instructions: `${prompt}
 
-You talk; a backend does the work. Anything that needs a tool (Claude sessions, permissions, porch, memory, hanging up) goes to the backend, and you tell ${user} what it found.`,
+You talk; a backend does the work, and it is slow (often 10 to 30 seconds). So:
+- Answer yourself whenever you can from what was already said on this call or what you already know: explaining a term, repeating or rephrasing something, opinions, simple yes or no. Do not say "checking" for those.
+- Use the backend only to act (send a task, answer a permission, post, remember, hang up) or to fetch something new (status, an agent's work, porch). Say one short line while it works, then keep listening.
+- Let ${user} finish. If they trail off or a sentence is cut, wait a moment or ask for the missing part; do not answer half a question.
+- Keep a list of every request ${user} makes on the call. When one is unclear, ask about that one, and if the talk moves on, come back to it before the call ends. Before saying goodbye, say which requests were sent and which still need something from ${user}.`,
     audio: {
       ...(sip ? {} : { format: { type: 'audio/pcmu', rate: 8000 } }),
       output: { voice: config.liveVoice },

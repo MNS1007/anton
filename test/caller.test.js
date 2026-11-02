@@ -46,3 +46,10 @@ test('nothing to wait for is said plainly', () => {
   const r = caller.callBackWhenDone([])
   assert.equal(r.ok, false)
 })
+
+test('a newer note from the same session replaces the older one in the queue', () => {
+  for (let i = 1; i <= 4; i++) caller.notify({ kind: 'note', ring: false, session: 'vision-24h', text: `waiting on you, version ${i}` })
+  caller.notify({ kind: 'done', session: 'main', text: 'main finished' })
+  const heard = pickUp()
+  assert.deepEqual(heard, ['waiting on you, version 4', 'main finished'])
+})

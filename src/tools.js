@@ -185,7 +185,20 @@ export function callTools({ onHangup = () => {} } = {}) {
     }
     switch (toolName) {
       case 'ask_claude': return remember(agent.ask(String(args.message || ''), { session: pick(args.session) }))
-      case 'get_status': return args.session ? { ...agent.status(args.session), longRun: longrun.list().find(r => r.session === agent.status(args.session).name) || null } : { ...agent.status(), longRuns: longrun.list() }
+      case 'get_status': {
+        if (args.session) return { ...agent.status(args.session), longRun: longrun.list().find(r => r.session === agent.status(args.session).name) || null }
+        // The overview stays short: it is read on a live call. Ask for one session for detail.
+        const runs = longrun.list()
+        return {
+          sessions: agent.list().map(s => ({
+            name: s.name,
+            state: s.waitingForPermission ? `waiting for permission: ${s.waitingForPermission}` : s.running ? `working on "${String(s.task).slice(0, 120)}"` : 'idle',
+            lastResult: String(s.lastResult || '').slice(0, 240),
+            longRun: runs.find(r => r.session === s.name) ? `${runs.find(r => r.session === s.name).hoursLeft} hours left` : undefined,
+          })),
+          note: 'Short overview. Give a session name for its full status.',
+        }
+      }
       case 'start_long_run': return remember(longrun.startRun({ session: pick(args.session), hours: args.hours, goal: args.goal, stopEarly: !!args.stop_early }))
       case 'stop_long_run': return remember(longrun.stopRun(pick(args.session)))
       case 'answer_permission': return remember(agent.answerPermission(!!args.approve, args.note, args.session))

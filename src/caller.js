@@ -9,6 +9,7 @@ let twilioClient = null
 const client = () => (twilioClient ??= twilio(config.twilioSid, config.twilioToken))
 
 let queue = []          // updates not yet heard by the user
+const latest = new Map() // session:note -> the queued text it replaces next time
 let active = null       // live call bridge: { inject(text), callSid }
 let outbound = null     // { sid, connected }
 let retryTimer = null
@@ -43,6 +44,13 @@ export function notify(notice) {
     if (callback && !callback.waiting.size) callback = null
     active.inject(notice.text)
     return
+  }
+  // A newer note from the same session replaces the older one, so a call does not
+  // open with four versions of the same update.
+  if (notice.kind === 'note' && notice.session) {
+    const key = `${notice.session}:note`
+    if (latest.has(key)) queue = queue.filter(t => t !== latest.get(key))
+    latest.set(key, notice.text)
   }
   queue.push(notice.text)
   let ring = notice.ring !== false
