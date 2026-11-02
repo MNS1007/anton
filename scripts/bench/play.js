@@ -12,7 +12,11 @@ import { EventEmitter } from 'node:events'
 const [scenarioFile, outFile, seedArg] = process.argv.slice(2)
 const benchHome = process.env.BENCH_HOME
 process.env.ANTON_HOME = mkdtempSync(join(tmpdir(), 'anton-bench-'))
-process.env.PORCH_URL = ''
+// Porch is "on" so Anton has its agent tools (ask_agent, list_agents, agent_work,
+// hub_read) as on real calls; nothing reaches a hub, because every tool call goes to
+// the stand-ins below and the hub watcher is never started.
+process.env.PORCH_URL = 'http://127.0.0.1:9'
+process.env.PORCH_TOKEN = 'bench-no-hub'
 const { config } = await import('../../src/config.js')
 const caller = await import('../../src/caller.js')
 const { handleLiveCall } = await import('../../src/live.js')
