@@ -1,7 +1,7 @@
 import { tick } from './setup.js'
 import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const longrun = await import('../src/longrun.js')
@@ -18,7 +18,7 @@ longrun.setDeps({
   // Stand-in for a Claude round: answers right away, one hour passes per round.
   ask: (prompt, { onDone }) => { prompts.push(prompt); setTimeout(() => { clock += 3600e3; const r = reply(prompts.length); r instanceof Error ? onDone('', r.message) : onDone(r, null) }, 0); return { ok: true } },
 })
-const settle = async () => { for (let i = 0; i < 50 && !notices.length; i++) await tick(5) }
+const settle = async () => { for (let i = 0; i < 100 && !notices.some(n => n.kind === 'done'); i++) await tick(5) }
 
 test('rounds keep coming until the time is up, then one call with the result', async () => {
   const r = longrun.startRun({ session: 'main', hours: 3, goal: 'Find a venture-scale idea. Read the brief first.' })
@@ -34,13 +34,35 @@ test('rounds keep coming until the time is up, then one call with the result', a
   assert.deepEqual(longrun.list(), [])
 })
 
-test('the session can finish early by saying so', async () => {
+test('by default a run lasts the full time even if the session says it is done', async () => {
   reply = n => n === 2 ? 'Here is the final idea. RUN COMPLETE' : 'step'
-  longrun.startRun({ session: 'main', hours: 10, goal: 'g' })
+  longrun.startRun({ session: 'main', hours: 5, goal: 'g' })
+  await settle()
+  assert.equal(prompts.length, 5, 'kept going after the early RUN COMPLETE')
+  assert.match(prompts[0], /there is no finishing early/)
+  assert.match(notices.at(-1).text, /time is up, after 5 rounds/)
+})
+
+test('with stopEarly the session can finish by saying so', async () => {
+  reply = n => n === 2 ? 'Here is the final idea. RUN COMPLETE' : 'step'
+  longrun.startRun({ session: 'main', hours: 10, goal: 'g', stopEarly: true })
   await settle()
   assert.equal(prompts.length, 2)
   assert.match(notices[0].text, /the session finished the goal, after 2 rounds[^]*final idea/)
   assert.doesNotMatch(notices[0].text, /RUN COMPLETE/)
+})
+
+test('asks under "Waiting on" in the notes reach the user once, without a call', async () => {
+  const notes = join(process.env.ANTON_HOME, 'runs', 'main-notes.md')
+  reply = n => { if (n === 1) writeFileSync(notes, '# notes\n## Waiting on Sam\n- Approve $40 of API spend for the paid test arms.\n## Next\n- more\n'); return 'step' }
+  longrun.startRun({ session: 'main', hours: 3, goal: 'g' })
+  await settle()
+  const asks = notices.filter(n => /waiting on you/.test(n.text))
+  assert.equal(asks.length, 1, 'shared once, not every round')
+  assert.equal(asks[0].ring, false)
+  assert.match(asks[0].text, /Approve \$40 of API spend/)
+  assert.doesNotMatch(asks[0].text, /## Next/)
+  assert.match(prompts[0], /## Waiting on Sam/)
 })
 
 test('a failed round ends the run and says why', async () => {

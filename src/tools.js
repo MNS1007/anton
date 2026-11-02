@@ -24,7 +24,7 @@ export const TOOLS = [
     { approve: { type: 'boolean' }, note: { type: 'string', description: 'Optional reason or instruction for Claude, mainly when denying' }, session }, ['approve']),
   fn('stop_task', 'Stop the task a session is working on.', { session }),
   fn('start_long_run', `Keep a Claude session working on a goal for hours (up to 72), for example an overnight or 24-hour research run. Anton gives it the next step again and again until the time is up or it finishes, and calls ${user} once at the end. Use when ${user} asks for work that should keep going for a set time.`,
-    { session: { type: 'string' }, hours: { type: 'number' }, goal: { type: 'string', description: 'What the run is for, in full, with anything the session should read first' } }, ['session', 'hours', 'goal']),
+    { session: { type: 'string' }, hours: { type: 'number' }, goal: { type: 'string', description: 'What the run is for, in full, with anything the session should read first' }, stop_early: { type: 'boolean', description: 'Only if the user says the session may stop as soon as it thinks it is done. Otherwise the run lasts the full time' } }, ['session', 'hours', 'goal']),
   fn('stop_long_run', 'Stop a long run early. The session keeps its notes.', { session }),
   fn('call_me_back', `Promise ${user} one phone call when work finishes: results are held and you call once the last of these sessions or agents is done. Use it after sending the tasks, when ${user} asks to be called back.`,
     { sessions: { type: 'array', items: { type: 'string' }, description: 'Sessions or agents to wait for. Leave out for everything working now' }, note: { type: 'string', description: 'What they are waiting for, in a few words' } }),
@@ -186,7 +186,7 @@ export function callTools({ onHangup = () => {} } = {}) {
     switch (toolName) {
       case 'ask_claude': return remember(agent.ask(String(args.message || ''), { session: pick(args.session) }))
       case 'get_status': return args.session ? { ...agent.status(args.session), longRun: longrun.list().find(r => r.session === agent.status(args.session).name) || null } : { ...agent.status(), longRuns: longrun.list() }
-      case 'start_long_run': return remember(longrun.startRun({ session: pick(args.session), hours: args.hours, goal: args.goal }))
+      case 'start_long_run': return remember(longrun.startRun({ session: pick(args.session), hours: args.hours, goal: args.goal, stopEarly: !!args.stop_early }))
       case 'stop_long_run': return remember(longrun.stopRun(pick(args.session)))
       case 'answer_permission': return remember(agent.answerPermission(!!args.approve, args.note, args.session))
       case 'stop_task': return remember(agent.stop(args.session || undefined))
