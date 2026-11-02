@@ -5,8 +5,8 @@
 //   tasks.jsonl      every Claude task and how it ended
 //   calls/           full call transcripts
 //   forgotten.jsonl  what you asked it to forget, so it is not learned again
-//   me.md            Anton's portrait of you: who you are, how you think, what you want (you can edit it)
-//   reflections.jsonl when it was rewritten, and the brief shared with your agents
+//   me.md            the shared memory about you (who you are, how you think, what you want), kept in step with porch
+//   reflections.jsonl when it was rewritten
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -162,15 +162,20 @@ export async function summarizeCall(callSid, lines) {
   log(`call remembered: ${summary ? 'summary' : 'no summary'}, ${Array.isArray(list) ? list.length : 0} fact(s)`)
 }
 
-// Reflection: Anton rewrites its portrait of the user (me.md) from everything it
-// has learned, so it grows as they do: who they are, how they think, what they
-// want. It is plain text the user can read and correct; their edits are kept
-// because each pass starts from the file. The same pass writes a brief the user's
-// other agents can see on porch.
+// Reflection: the memory about the user is one shared document. On porch every
+// agent reads and edits it; Anton keeps a copy in me.md and folds in what it has
+// learned (calls, notes, tasks, answers) on each pass. It is one coherent picture
+// of who the user is, how they think and what they want, with no record of who
+// said what. Private things stay in Anton's own notes, never in this document.
 
-// Earlier versions called the portrait understanding.md.
+// Earlier versions called it understanding.md.
 if (existsSync(file('understanding.md')) && !existsSync(file('me.md'))) renameSync(file('understanding.md'), file('me.md'))
 const readPortrait = () => { try { return readFileSync(file('me.md'), 'utf8').trim() } catch { return '' } }
+
+// The shared copy changed on porch: keep the local one the same.
+export function setPortrait(text) {
+  writeFileSync(file('me.md'), String(text || '').trim() + '\n')
+}
 
 export const lastReflection = () => readLines('reflections.jsonl').at(-1) || null
 
@@ -181,27 +186,26 @@ export function newSinceReflection() {
   return { since: last || null, notes: fresh('notes.jsonl'), calls: fresh('episodes.jsonl'), tasks: fresh('tasks.jsonl') }
 }
 
-// agentsDigest: what each agent is for and doing, from porch and Claude sessions.
-// Returns { portrait, brief } or null when the model gave nothing usable.
-// aboutUserPosts: what other agents wrote about the user for everyone (porch's
-// context room), used like answers: second-hand, labelled by agent.
-export async function reflect({ agentsDigest = '', aboutUserPosts = '', askFn = ask } = {}) {
+// shared: the current shared memory text (from porch), or null to use me.md.
+// agentsDigest: what each agent is for and doing.
+// Returns { memory } or null when the model gave nothing usable.
+export async function reflect({ shared = null, agentsDigest = '', askFn = ask } = {}) {
   const u = config.userName
   const profile = readFileSync(file('profile.md'), 'utf8').trim()
+  const current = shared ?? readPortrait()
   const material = [
+    `The shared memory as it stands (every agent edits it, and ${u} may have corrected it; keep what is still true):\n${current || '(empty)'}`,
     `Profile, written by ${u} (always right; never contradict it):\n${profile === PROFILE_TEMPLATE.trim() ? '(empty)' : clip(profile, 4000)}`,
-    `The portrait so far (may include ${u}'s own corrections; keep them):\n${readPortrait() || '(none yet)'}`,
     `Notes (things ${u} said or asked to remember), oldest first:\n${clip(readLines('notes.jsonl').slice(-80).map(n => `- ${n.ts.slice(0, 10)} ${n.text}`).join('\n'), 8000) || '(none)'}`,
     `Call summaries:\n${clip(readLines('episodes.jsonl').slice(-20).map(e => `- ${e.ts.slice(0, 10)} ${e.summary}`).join('\n'), 6000) || '(none)'}`,
     `Tasks ${u} gave to agents:\n${clip(readLines('tasks.jsonl').slice(-30).map(t => `- ${t.ts.slice(0, 10)} [${t.session}] ${clip(t.task, 160)}: ${t.failed ? 'ended early' : 'done'}`).join('\n'), 5000) || '(none)'}`,
-    `Answers agents gave to questions about ${u} (second-hand; say which agent):\n${clip(readLines('tasks.jsonl').filter(t => !t.failed && t.result && aboutUser(t.task)).slice(-6).map(t => `- from ${t.session}, ${t.ts.slice(0, 10)}:\n${clip(t.result, 3000)}`).join('\n'), 12000) || '(none)'}`,
-    `What ${u}'s other agents wrote about ${u} for all agents (second-hand; say which agent):\n${clip(aboutUserPosts, 12000) || '(none)'}`,
+    `What agents answered when asked about ${u}:\n${clip(readLines('tasks.jsonl').filter(t => !t.failed && t.result && aboutUser(t.task)).slice(-6).map(t => `- ${t.ts.slice(0, 10)}:\n${clip(t.result, 3000)}`).join('\n'), 12000) || '(none)'}`,
     `Forgotten at ${u}'s request (never write these or anything like them):\n${clip(readLines('forgotten.jsonl').map(f => `- ${f.description}`).join('\n'), 2000) || '(nothing)'}`,
-    `What ${u}'s agents are doing (information about the agents only, never facts about ${u}):\n${clip(agentsDigest, 6000) || '(nothing)'}`,
+    `What ${u}'s agents are doing (about the agents only, never facts about ${u}):\n${clip(agentsDigest, 6000) || '(nothing)'}`,
   ].join('\n\n')
-  const out = await askFn(`You keep ${config.assistantName}'s memory. ${config.assistantName} is ${u}'s assistant and the single point of contact for all of ${u}'s agents. Today is ${now().slice(0, 10)}.
+  const out = await askFn(`You keep the shared memory about ${u}: one document that ${config.assistantName} and all of ${u}'s other agents read as background, so each of them understands ${u} as a person. Nobody reads it out to ${u}. Today is ${now().slice(0, 10)}.
 
-Rewrite the portrait of ${u} from the material below. It is a picture of a person, not a status report: who ${u} is, how they think, what they want from life and work. ${config.assistantName} and ${u}'s other agents read it as background so they understand ${u}; nobody reads it out to ${u}. It grows over time: keep what is still true (especially ${u}'s own corrections), deepen it with what is new, and change it when ${u} changes.
+Rewrite the document from the material below. It is a picture of a person, not a status report or a log: who ${u} is, how they think, what they want from work and life. Keep what is still true, especially anything ${u} corrected, deepen it with what is new, fix what is now wrong, and change it when ${u} changes.
 
 Use these headings, in this order:
 # Who ${u} is
@@ -214,31 +218,24 @@ Use these headings, in this order:
 ## How to work with ${u}
 ## Right now (current focus, a few lines; this part changes often)
 ## ${u}'s agents (what each is for and how ${u} uses it)
-## Tensions and open questions (things that do not fit together yet, or that nobody knows)
+## Open questions (things that do not fit together yet, or that nobody knows)
 
 Rules:
+- One voice. Write it as plain statements about ${u}. Never say who said or wrote something ("per X", "according to Y", "X says"). Where sources disagree, ${u}'s own words (profile, notes, calls) win; otherwise keep the most recent and specific.
 - Only state what the material supports. Where it is thin, say less, or note it under open questions. Never invent.
-- ${u}'s own words (profile, notes, calls) come first. Answers other agents gave when asked about ${u} are second-hand: use them, but say where something came from when it is not ${u}'s own view, and let ${u}'s words win any conflict.
 - Leave out task status, commit ids and step-by-step history. A project's stage is enough.
-- Use ${u}'s name or they, never guessed pronouns. At most 1000 words.
+- Nothing private, because agents running in other companies' clouds read it: no health, money, family, other people's personal details, customer names, contact details, credentials, or anything said in confidence.
+- Use ${u}'s name or they, never guessed pronouns. At most 1200 words.
 
-Then write the version of the portrait that ${u}'s other agents get, so every agent understands ${u} as well as you do and knows what ${u} is doing with the others. Same headings as the portrait. Keep everything that helps an agent work with ${u}: who they are, how they think, what they want, values, technical side, how they work, how to work with them, right now, and what each agent is doing. Leave out anything private: health, money, family, other people's personal details, customer names, contact details, credentials, and anything said in confidence. At most 800 words.
-
-Reply in exactly this form:
-### PORTRAIT
-...
-### BRIEF
-...
+Reply with only the document, starting with "# Who ${u} is".
 
 ${material}`)
-  const m = /###\s*PORTRAIT\s*([\s\S]*?)###\s*BRIEF\s*([\s\S]*)$/i.exec(String(out || ''))
-  if (!m || !m[1].trim()) { log('reflection gave nothing usable'); return null }
-  const portrait = m[1].trim()
-  const brief = m[2].trim()
-  writeFileSync(file('me.md'), portrait + '\n')
-  append('reflections.jsonl', { ts: now(), words: portrait.split(/\s+/).length, brief: clip(brief, 3000) })
-  log('reflected: portrait updated')
-  return { portrait, brief }
+  const text = String(out || '').trim()
+  if (!text.startsWith('#') || text.split(/\s+/).length < 40) { log('reflection gave nothing usable'); return null }
+  setPortrait(text)
+  append('reflections.jsonl', { ts: now(), words: text.split(/\s+/).length })
+  log('reflected: shared memory rewritten')
+  return { memory: text }
 }
 
 // A one-shot Claude answer with no tools, for summaries.

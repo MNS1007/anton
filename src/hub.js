@@ -23,11 +23,20 @@ let calls = { day: '', count: 0 }
 async function call(path, opts = {}) {
   const r = await fetch(config.porchUrl + path, { ...opts, headers: { ...auth, 'Content-Type': 'application/json' } })
   const body = await r.json().catch(() => ({}))
-  if (!r.ok) throw new Error(body.error || `porch answered ${r.status}`)
+  if (!r.ok) throw Object.assign(new Error(body.error || `porch answered ${r.status}`), { status: r.status, body })
   return body
 }
 
 export const post = msg => call('/v1/messages', { method: 'POST', body: JSON.stringify(msg) })
+
+// The shared memory about the user: one document every agent reads and edits.
+// null when the hub has none yet (or is an older porch without it).
+export async function getMemory() {
+  try { return await call('/v1/memory') } catch (err) { if (err.status === 404) return null; throw err }
+}
+
+// Replace it. Fails with status 409 if someone saved after baseVersion.
+export const putMemory = (text, baseVersion) => call('/v1/memory', { method: 'PUT', body: JSON.stringify({ text, base_version: baseVersion }) })
 
 export function list(query = {}) {
   const q = Object.entries(query).filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -158,7 +167,7 @@ const HELP = `Post a task for anton and Claude does it in the main session. Othe
 - "yes" / "no" to answer a permission question (add the session name if several wait)
 - "stop <session>", "reset <session>" (fresh conversation), "remove session <name>"
 - "remember <something>", "recall <words>", "forget <description>"
-- "reflect" to have Anton update its portrait of you now and share the brief with your agents`
+- "reflect" to have Anton fold what it learned into the shared memory now`
 
 async function command(m) {
   const text = m.text.trim()

@@ -1,9 +1,10 @@
-// Keeps Anton's portrait of the user current, and tells the user's other
-// agents what the user is doing with the rest of them.
+// Keeps the shared memory about the user current.
 //
-// Every so often, when Anton has learned something new (a call, a note, a task),
-// it reflects: memory.reflect() rewrites me.md, and the brief
-// it writes goes on porch in the context room, where every agent can read it.
+// The memory is one document on porch that every agent reads and edits. Every so
+// often, when Anton has learned something new (a call, a note, a task), it
+// reflects: it reads the shared document, folds in what it learned, and writes
+// it back. me.md on the laptop is a copy, so calls and Claude tasks can use it
+// even when porch is down.
 import { config } from './config.js'
 import { log } from './log.js'
 import * as memory from './memory.js'
@@ -28,30 +29,40 @@ async function agentsDigest() {
   return lines.join('\n')
 }
 
-// Other agents' posts in the context room are written about the user for everyone.
-async function aboutUserPosts() {
-  if (!hub.enabled || !config.porchContextRoom) return ''
-  const posts = await hub.list({ room: config.porchContextRoom, limit: 10 }).catch(() => [])
-  return posts.filter(p => p.from !== hub.self()).slice(-3)
-    .map(p => `- from ${p.from}, ${p.ts.slice(0, 10)}:\n${clip(p.text, 6000)}`).join('\n')
+// The shared document, or null when porch is off or has none yet.
+async function readShared(getMemory) {
+  if (getMemory === hub.getMemory && !hub.enabled) return null
+  try { return await getMemory() } catch (err) { log(`could not read the shared memory: ${err.message}`); return null }
 }
 
-// Reflect now. Shares the brief when it changed. Returns what was written.
-export function reflectNow({ reflect = memory.reflect, post = hub.post } = {}) {
+// Bring me.md in line with porch (on start, and when another agent edits it).
+export async function pull({ getMemory = hub.getMemory } = {}) {
+  const shared = await readShared(getMemory)
+  if (shared?.text) memory.setPortrait(shared.text)
+  return shared
+}
+
+// Reflect now and write the result back to porch. If another agent saved in the
+// meantime, start again from their version once. Returns what was written.
+export function reflectNow({ reflect = memory.reflect, getMemory = hub.getMemory, putMemory = hub.putMemory } = {}) {
   if (running) return running
   running = (async () => {
-    const before = memory.lastReflection()?.brief || ''
-    const r = await reflect({ agentsDigest: await agentsDigest(), aboutUserPosts: await aboutUserPosts() })
-    if (!r) return null
-    if (r.brief && hub.enabled && config.porchContextRoom && clip(r.brief, 3000) !== before) {
-      await post({
-        room: config.porchContextRoom,
-        kind: 'briefing',
-        text: `Who ${config.userName} is, what they are working on, and what each agent is doing (from ${config.assistantName}, ${new Date().toISOString().slice(0, 10)}). Read this before you start a task.\n\n${r.brief}`,
-      }).then(() => log(`shared the brief in porch room ${config.porchContextRoom}`))
-        .catch(err => log(`could not share the brief: ${err.message}`))
+    const digest = await agentsDigest()
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const shared = await readShared(getMemory)
+      const r = await reflect({ shared: shared?.text ?? null, agentsDigest: digest })
+      if (!r) return null
+      if (!shared) return r
+      try {
+        await putMemory(r.memory, shared.version)
+        log('shared memory updated on porch')
+        return r
+      } catch (err) {
+        if (err.status !== 409) { log(`could not save the shared memory: ${err.message}`); return r }
+        log('someone else edited the shared memory first; reflecting again from theirs')
+      }
     }
-    return r
+    return null
   })().finally(() => { running = null })
   return running
 }
@@ -66,6 +77,7 @@ export function due(now = Date.now()) {
 }
 
 export function start() {
+  pull().catch(() => {})
   if (!config.reflectHours) return
   const check = () => { if (due()) reflectNow().catch(err => log(`reflection failed: ${err.message}`)) }
   timer = setInterval(check, 15 * 60e3)
