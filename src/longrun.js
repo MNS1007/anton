@@ -14,7 +14,23 @@ const DONE = 'RUN COMPLETE'
 const file = () => join(config.antonHome, 'runs.json')
 const runs = new Map() // session -> { session, goal, until, rounds, notes, last, maxRounds }
 
-let deps = { ask: agent.ask, notify: () => {}, now: () => Date.now(), pause: 5000 }
+// pause: the gap between rounds. Back-to-back rounds burn through a Claude plan's
+// usage limit in a few hours; a gap gives fewer, deeper rounds.
+let deps = { ask: agent.ask, notify: () => {}, now: () => Date.now(), pause: config.longRunGapMinutes * 60e3, retry: 60e3, later: (fn, ms) => setTimeout(fn, ms) }
+
+// "You've hit your 5-hour limit · resets 12:30am (America/Los_Angeles)": how long
+// to wait. A couple of minutes past the reset, or half an hour if no time is given.
+export function limitWait(message, now = new Date()) {
+  if (!/limit|rate.?limit|usage/i.test(message) || !/hit|reached|exceeded|resets/i.test(message)) return 0
+  const m = /resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i.exec(message)
+  if (!m) return 30 * 60e3
+  let h = Number(m[1]) % 12
+  if (m[3].toLowerCase() === 'pm') h += 12
+  const at = new Date(now)
+  at.setHours(h, Number(m[2] || 0), 0, 0)
+  if (at <= now) at.setDate(at.getDate() + 1)
+  return at - now + 2 * 60e3
+}
 export function setDeps(d) { deps = { ...deps, ...d } }
 
 function save() {
@@ -71,7 +87,23 @@ function round(r) {
       r.rounds++
       r.last = String(result || failed || '').slice(-4000)
       save()
-      if (failed) return finish(r, String(failed).includes('stopped') ? 'it was stopped' : `a round failed: ${String(failed).slice(0, 200)}`)
+      if (failed) {
+        const why = String(failed)
+        if (why.includes('stopped')) return finish(r, 'it was stopped')
+        r.rounds-- // a failed round did no work
+        // Out of plan usage: wait for the reset, then carry on.
+        const wait = limitWait(why, new Date(deps.now()))
+        if (wait && deps.now() + wait < r.until) {
+          log(`[${r.session}] long run paused for ${Math.round(wait / 60e3)} min: ${why.slice(0, 120)}`)
+          deps.notify({ kind: 'note', ring: false, session: r.session, text: `The long run in ${r.session} hit the Claude usage limit and is paused until about ${new Date(deps.now() + wait).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. It carries on by itself after that.` })
+          return deps.later(() => round(r), wait)
+        }
+        // Anything else gets a few tries before the run gives up.
+        r.failures = (r.failures || 0) + 1
+        if (!wait && r.failures <= 3) return deps.later(() => round(r), deps.retry * r.failures)
+        return finish(r, `a round failed: ${why.slice(0, 200)}`)
+      }
+      r.failures = 0
       if (String(result).includes(DONE) && (r.stopEarly || hoursLeft(r) <= 0.5)) return finish(r, 'the session finished the goal')
       shareAsks(r)
       // A round that leaves the notes untouched did no work. Count them.
@@ -84,7 +116,10 @@ function round(r) {
   if (!res.ok) finish(r, res.reason)
 }
 
-// New asks under "Waiting on <user>" in the notes reach the user without a call.
+// New asks under "Waiting on <user>" in the notes reach the user without a call:
+// when a new item appears, or at most every few hours when only the wording moved.
+const ASK_EVERY_MS = 4 * 3600e3
+const items = text => text.split('\n').filter(l => /^\s*(\d+[.)]|[-*])\s/.test(l)).length
 function shareAsks(r) {
   let notes = ''
   try { notes = readFileSync(r.notes, 'utf8') } catch { return }
@@ -93,7 +128,10 @@ function shareAsks(r) {
   const body = notes.slice(start).split('\n').slice(1).join('\n')
   const asks = body.split(/\n## /)[0].trim()
   if (!asks || asks === r.asks) return
+  const more = items(asks) > items(r.asks || '')
+  if (!more && r.asksAt && deps.now() - r.asksAt < ASK_EVERY_MS) return
   r.asks = asks
+  r.asksAt = deps.now()
   save()
   deps.notify({ kind: 'note', ring: false, session: r.session, text: `The long run in ${r.session} is waiting on you for: ${asks.slice(0, 1500)} It keeps working on other things meanwhile.` })
 }

@@ -73,6 +73,8 @@ export const config = {
   memoryModel: env('MEMORY_MODEL', 'haiku'),
   // Least hours between reflections when something new was learned. 0 turns reflection off.
   reflectHours: Number(env('REFLECT_HOURS', 6)),
+  // Minutes between rounds of a long run. Back-to-back rounds use up a Claude plan's limit fast.
+  longRunGapMinutes: Number(env('LONG_RUN_GAP_MINUTES', 3)),
 
   porchUrl: env('PORCH_URL', '').replace(/\/$/, ''),
   porchToken: env('PORCH_TOKEN'),

@@ -195,6 +195,7 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `MAX_RUNNING` | `3` | Most sessions working at the same time |
 | `ANTON_HOME` | `~/.anton` | Where sessions and memory are kept |
 | `MEMORY_MODEL` | `haiku` | Claude model that writes call summaries and reflections |
+| `LONG_RUN_GAP_MINUTES` | `3` | Minutes between rounds of a long run. Rounds back to back use up a Claude plan's usage limit in a few hours. If the limit is hit anyway, the run waits for the reset and carries on |
 | `REFLECT_HOURS` | `6` | Least hours between reflections when something new was learned. 0 turns reflection off |
 | `TRANSCRIBE_MODEL` | `gpt-4o-mini-transcribe` | OpenAI model that transcribes what you say |
 | `RETRY_MINUTES` | `15` | Wait between calls when you don't pick up |

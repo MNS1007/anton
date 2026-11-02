@@ -14,6 +14,7 @@ beforeEach(() => { prompts = []; notices = []; reply = () => 'did a step' })
 longrun.setDeps({
   now: () => clock,
   pause: 0,
+  retry: 0,
   notify: n => notices.push(n),
   // Stand-in for a Claude round: answers right away, one hour passes per round.
   ask: (prompt, { onDone }) => { prompts.push(prompt); setTimeout(() => { clock += 3600e3; const r = reply(prompts.length); r instanceof Error ? onDone('', r.message) : onDone(r, null) }, 0); return { ok: true } },
@@ -66,11 +67,26 @@ test('asks under "Waiting on" in the notes reach the user once, without a call',
   assert.match(prompts[0], /## Waiting on Sam/)
 })
 
-test('a failed round ends the run and says why', async () => {
+test('a failing round is retried three times, then the run ends and says why', async () => {
   reply = () => new Error('model overloaded')
-  longrun.startRun({ session: 'main', hours: 5, goal: 'g' })
+  longrun.startRun({ session: 'main', hours: 10, goal: 'g' })
   await settle()
-  assert.match(notices[0].text, /a round failed: model overloaded/)
+  assert.equal(prompts.length, 4, 'first try plus three retries')
+  assert.match(notices.at(-1).text, /a round failed: model overloaded/)
+})
+
+test('hitting the plan usage limit pauses the run until the reset, then it carries on', async () => {
+  const waits = []
+  longrun.setDeps({ later: (fn, ms) => { waits.push(ms); clock += ms; setTimeout(fn, 0) } })
+  // A reset an hour after the failing round, in local time like the real message.
+  const resetAt = () => { const d = new Date(clock + 3600e3); const h = d.getHours(); return `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}` }
+  reply = n => n === 2 ? new Error(`You've hit your 5-hour limit · resets ${resetAt()} (America/Los_Angeles)`) : 'step'
+  longrun.startRun({ session: 'main', hours: 6, goal: 'g' })
+  await settle()
+  assert.ok(waits.length === 1 && waits[0] > 0, 'waited once, for the reset')
+  assert.ok(notices.some(n => /hit the Claude usage limit and is paused/.test(n.text) && n.ring === false))
+  assert.match(notices.at(-1).text, /time is up/, 'and then ran to the end')
+  longrun.setDeps({ later: (fn, ms) => setTimeout(fn, ms) })
 })
 
 test('runs are saved so a restart can pick them up', () => {
