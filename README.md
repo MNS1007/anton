@@ -14,11 +14,11 @@ you (phone) <-> Twilio <-> Anton on your laptop <-> OpenAI Realtime (the voice)
 - **Anton calls you** when Claude finishes, fails, or needs permission for something.
 - **You answer by voice.** "Yes, go ahead." "No, don't push." "What's it doing?" "Stop."
 - **Missed call?** Anton tries again every 15 minutes until you answer.
+- **Calls you back when asked.** "Do these and call me when they are done" gets one call, once the last of them finishes.
 - **Remembers you.** Anton keeps notes, a profile you can edit, and a short summary of every call, and uses them on the next call.
 - **Several Claude sessions.** Keep one session per piece of work ("resume", "porch-ui"), run them side by side, and pick up a Claude Code session you started in a terminal.
 - **All your agents in one place.** Connect Anton to a [porch](https://github.com/MNS1007/porch) hub and it knows every agent there (a research agent, a job agent, a Claude Code terminal). Ask what one has done and Anton reads its work in full and explains it. Say "do this with Grok Bot" and Anton sends it there. No phone needed for that part.
-- **Keeps your agents in the loop.** Anton shares a short note on porch about what you are working on and what each agent is doing, so none of them works in a silo.
-- **A portrait of you that grows.** Anton keeps `me.md`: who you are, how you think, what you want in work and life, your values, your technical side and how to work with you. It is background for Anton and your agents, never read out to you. Anton rewrites it as it learns from you and from what your agents say when you ask them about yourself. You can read and correct it.
+- **One memory about you, shared by every agent.** A single document on porch says who you are, how you think, what you want and what you are doing now. Every agent reads it and can update it, and Anton keeps it growing from what you tell it. It is background, never read out to you.
 
 ## Quick setup: paste this prompt
 
@@ -127,13 +127,13 @@ Anton keeps plain files in `~/.anton/memory`:
 | `tasks.jsonl` | Every Claude task, which session ran it, and how it ended |
 | `calls/` | Full transcripts of each call |
 | `forgotten.jsonl` | What you asked it to forget, so it is not learned again |
-| `me.md` | Anton's portrait of you: who you are, how you think, what you want, values, technical side, how you work, how to work with you, right now, your agents, open questions. Rewritten as it learns. Edit it to correct it. (Older versions called it `understanding.md`; it is renamed on start.) |
-| `reflections.jsonl` | When the portrait was rewritten, and the brief shared with your agents |
+| `me.md` | A copy of the shared memory about you on porch: who you are, how you think, what you want, values, technical side, how you work, how to work with you, right now, your agents, open questions. Used on calls even when porch is down. (Older versions called it `understanding.md`; it is renamed on start.) |
+| `reflections.jsonl` | When the shared memory was rewritten |
 
-- At the start of every call Anton reads your profile, portrait, notes, recent calls and recent tasks. Claude gets your profile, portrait and notes with every task. The portrait is background: Anton uses it to understand you and does not recite it.
+- At the start of every call Anton reads your profile, the shared memory about you, notes, recent calls and recent tasks. Claude gets your profile, the shared memory and notes with every task. The shared memory is background: Anton uses it to understand you and does not recite it.
 - After a call, Anton writes a summary and picks out lasting facts. Facts only come from your own words, never from agent posts or updates Anton read to you.
-- "Forget ..." removes matching notes and closely matching lines of the portrait, and later rewrites are told to leave it out. Transcripts stay until you delete them from `calls/`.
-- **Reflection.** When Anton has learned something new (a call, a note, a finished task), at most every `REFLECT_HOURS` (default 6) and at least once a day, it rewrites `me.md`. It starts from the current file, so your corrections stay. Your own words come first. When you ask an agent about yourself ("ask Claude what it knows about me"), its answer feeds the portrait too, marked as second-hand. Other agent posts only tell it what the agents are doing. Post "reflect" on porch to run it now.
+- "Forget ..." removes matching notes and closely matching lines of the shared memory, and later rewrites are told to leave it out. Transcripts stay until you delete them from `calls/`.
+- **Reflection.** When Anton has learned something new (a call, a note, a finished task), at most every `REFLECT_HOURS` (default 6) and at least once a day, it reads the shared memory on porch, folds in what it learned, and writes it back. If another agent saved first, it starts again from their version. Your own words win; answers agents gave when you asked them about yourself count too. Post "reflect" on porch to run it now.
 - Summaries are written by Claude (`MEMORY_MODEL`, default `haiku`) on your normal Claude plan.
 
 ## Sessions
@@ -159,7 +159,7 @@ What you get:
 - **Pick a session.** Start a post with the session name, like "resume: tighten the summary". Without one it goes to `main`.
 - **Other commands:** "sessions", "new session <name> in <folder>: <purpose>", "claude sessions" then "attach <id> as <name>", "link <name> to <porch agent>", "stop <session>", "reset <session>", "remove session <name>", "remember ...", "recall ...", "forget ...". Post "help" to see them.
 - **Talk to any agent through Anton.** "agents" lists every agent with what it is doing. "<agent>: <task>" (for example "grokbot: find three robotics roles") sends it a task. Claude sessions start at once; agents on porch pick it up the next time they run, and Anton passes on their reply (a post addressed to Anton, or a reply in the task's thread). On a call, just ask: "what has Muse found this week?", "explain that dashboard", "have Grok Bot follow up with them".
-- **A shared picture for every agent.** After each reflection, Anton posts a short brief in the `context` room: what you are focused on and what each agent is doing. Nothing private goes in it. Add one line to each agent's standing instructions: "Before each task, read the latest post in the context room." Set `PORCH_CONTEXT_ROOM=none` to stop sharing.
+- **One shared memory for every agent.** Porch keeps a single document about you (who you are, how you think, what you want, what you are doing now) that every agent reads and can edit. Anton folds what it learns into it on each reflection and keeps a copy in `me.md`. It has no "who said what": it reads as one picture of you. Tell each agent once: "Before each task, read the shared memory on porch, and update the section you know better."
 - **Calls when another agent needs you.** If an agent posts something addressed to `anton`, or marks a post urgent, Anton phones you and reads you the gist. Everything else waits on the board.
 - **Claude can read the board.** During any task, Claude can read and search what your other agents posted, without asking. Posting to the board still asks you.
 - **Ask about it on a call.** "What did my agents post today?" "Tell the job bot to pause."
@@ -209,7 +209,6 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `PORCH_BOSS` | `me` | Your own name on porch. Only your messages can give Claude tasks |
 | `PORCH_ROOM` | `anton` | Room where Anton posts Claude's updates and questions |
 | `PORCH_CALL_ON` | `for-me,urgent` | Which posts from other agents make Anton call: `for-me` (addressed to Anton), `urgent` (marked high or alert), `questions`, `all` or `none` |
-| `PORCH_CONTEXT_ROOM` | `context` | Room where Anton shares what you are working on with your agents. `none` turns it off |
 | `PORCH_CALLS_PER_DAY` | `4` | Most calls a day caused by porch posts. Past that, updates wait for your next call. 0 means no limit |
 
 Claude also uses your normal Claude Code settings, CLAUDE.md files and allow rules.
