@@ -7,7 +7,9 @@
     "start": "node src/index.js",
     "check-voice": "node scripts/check-voice.js",
     "test": "node --test test/*.test.js",
-    "check-live": "node scripts/live-call-check.js"
+    "check-live": "node scripts/live-call-check.js",
+    "bench-calls": "node scripts/bench/run.js",
+    "bench-scenarios": "node scripts/bench/make.js"
   },
   "license": "MIT",
   "type": "module",

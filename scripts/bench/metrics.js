@@ -63,7 +63,12 @@ export function talkOvers(userAudio, speech) {
 }
 
 const READS = new Set(['get_status', 'list_agents', 'agent_work', 'hub_read', 'recall', 'find_claude_sessions'])
-const matches = (call, req) => call.name === req.tool && (!req.target || JSON.stringify(call.args || {}).toLowerCase().includes(String(req.target).toLowerCase()))
+// Tools that do the same job count as the same: sending a task can go through
+// ask_claude or ask_agent, and a session can be named several ways.
+const FAMILY = { ask_claude: 'send', ask_agent: 'send', hub_post: 'send', create_session: 'session', attach_session: 'session', link_agent_session: 'session', start_long_run: 'run', stop_long_run: 'run' }
+const family = t => FAMILY[t] || t
+const key = s => String(s || '').toLowerCase().replace(/^claude-code\//, '').replace(/[-_ ]?claude$/, '').replace(/[^a-z0-9]/g, '')
+const matches = (call, req) => family(call.name) === family(req.tool) && (!req.target || JSON.stringify(call.args || {}).toLowerCase().replace(/[^a-z0-9]/g, '').includes(key(req.target)))
 
 // A request counts as handled when a matching action was taken, or Anton asked
 // about it (a question naming the target) and it was not left hanging.
@@ -83,8 +88,10 @@ export function wrongActions(requests, tools) {
 const median = xs => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)] }
 const p90 = xs => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(s.length * 0.9))] }
 
-export function score(rec, scenario) {
-  const outcomes = requestOutcomes(scenario.expect?.requests || [], rec.tools, rec.turns)
+// judged: outcomes from a model that read the call (see run.js); exact matching is
+// the fallback, since one request can be handled several valid ways.
+export function score(rec, scenario, judged = null) {
+  const outcomes = judged || requestOutcomes(scenario.expect?.requests || [], rec.tools, rec.turns)
   const d = delays(rec.userAudio, rec.speech)
   return {
     dropped: outcomes.filter(o => o.outcome === 'dropped').length,
