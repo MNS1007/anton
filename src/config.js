@@ -50,7 +50,7 @@ export const config = {
   // Calls that reach OpenAI over SIP always use GPT-Live (see src/sip.js).
   voiceEngine: env('VOICE_ENGINE', 'realtime'),
   liveModel: env('LIVE_MODEL', 'gpt-live-1'),
-  liveVoice: env('LIVE_VOICE', 'marin'),
+  liveVoice: env('LIVE_VOICE', 'cedar'),
   liveBackendModel: env('LIVE_BACKEND_MODEL', 'gpt-5.5'),
   liveUrl: env('LIVE_URL', 'https://api.openai.com/v1/live/sessions').replace(/\/$/, ''),
   openaiWebhookSecret: env('OPENAI_WEBHOOK_SECRET'),
