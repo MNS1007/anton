@@ -8,8 +8,14 @@ import http from 'node:http'
 const messages = []
 const streams = new Set()
 const seen = { anton: '2026-11-01T10:00:00Z', me: '2026-11-01T10:00:00Z', muse: '2026-11-01T09:00:00Z', grokbot: '2026-11-01T08:00:00Z' }
+// Like porch: `dm: x` posts in the DM room of the sender and x; a DM post with no
+// `to` is addressed to the other member.
 function add(from, msg) {
-  const m = { id: messages.length + 1, ts: new Date().toISOString(), from, room: msg.room || 'general', kind: msg.kind || 'note', to: msg.to || [], reply_to: msg.reply_to ?? null, text: msg.text }
+  let room = msg.room || 'general'
+  if (msg.dm) room = `dm:${[from, msg.dm].sort().join('+')}`
+  let to = msg.to || []
+  if (room.startsWith('dm:') && !to.length) to = room.slice(3).split('+').filter(n => n !== from)
+  const m = { id: messages.length + 1, ts: new Date().toISOString(), from, room, kind: msg.kind || 'note', to, reply_to: msg.reply_to ?? null, text: msg.text }
   messages.push(m)
   for (const res of streams) res.write(`id: ${m.id}\ndata: ${JSON.stringify(m)}\n\n`)
   return m
@@ -83,6 +89,7 @@ test('asks a porch agent; a reply in the thread comes back as the result', async
   const task = messages.at(-1)
   assert.equal(task.from, 'anton')
   assert.deepEqual(task.to, ['grokbot'])
+  assert.equal(task.room, 'dm:anton+grokbot', 'tasks go in the DM, which the agent can always read')
   assert.equal(agent.status('grokbot').running, true)
   add('grokbot', { room: 'jobs', text: 'Unrelated status post.' })
   await tick(100)

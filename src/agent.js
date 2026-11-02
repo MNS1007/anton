@@ -207,7 +207,7 @@ function sendToAgent(s, message, label, onDone) {
   save()
   log(`[${s.name}] posted to ${s.porchAgent}: ${s.task}`)
   s.postId = null
-  Promise.resolve().then(() => agentPost({ to: [s.porchAgent], kind: 'question', text: message }))
+  Promise.resolve().then(() => agentPost({ dm: s.porchAgent, kind: 'question', text: message }))
     .then(posted => { s.postId = posted?.id ?? null })
     .catch(err => finishAgentTask(s, '', `could not post to porch: ${err.message}`))
 }
@@ -302,7 +302,7 @@ export function stop(name) {
   if (!s) return { ok: false, reason: name ? `No session named ${name}.` : running.length ? `Several sessions are working: ${running.map(r => r.name).join(', ')}. Say which.` : 'Nothing is running.' }
   if (!s.running) return { ok: false, reason: `${s.name} is not working on anything.` }
   if (s.porchAgent) {
-    Promise.resolve().then(() => agentPost({ to: [s.porchAgent], kind: 'note', text: 'Stop the task I sent you.' })).catch(() => {})
+    Promise.resolve().then(() => agentPost({ dm: s.porchAgent, kind: 'note', text: 'Stop the task I sent you.' })).catch(() => {})
     finishAgentTask(s, '', 'stopped by the user')
     return { ok: true, session: s.name }
   }
