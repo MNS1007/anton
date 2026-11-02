@@ -50,7 +50,7 @@ export function reflectNow({ reflect = memory.reflect, getMemory = hub.getMemory
     const digest = await agentsDigest()
     for (let attempt = 0; attempt < 2; attempt++) {
       const shared = await readShared(getMemory)
-      const r = await reflect({ shared: shared?.text ?? null, agentsDigest: digest })
+      const r = await reflect({ shared: shared?.text || null, agentsDigest: digest })
       if (!r) return null
       if (!shared) return r
       try {
