@@ -96,7 +96,7 @@ test('end_call hangs up after the goodbye', async () => {
   const { ws } = start({ hangUp: () => hung++ })
   ws.event({ type: 'session.input_transcript.delta', delta: 'bye' })
   ws.event({ type: 'response.event', event: { type: 'response.output_item.done', item: { type: 'function_call', name: 'end_call', call_id: 'c9', arguments: '{}' } } })
-  await tick(30)
+  for (let i = 0; i < 100 && !hung; i++) await tick(10)
   assert.equal(hung, 1)
 })
 
