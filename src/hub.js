@@ -11,6 +11,7 @@ import * as memory from './memory.js'
 import * as directory from './agents.js'
 import * as reflection from './reflect.js'
 import * as longrun from './longrun.js'
+import * as callgate from './callgate.js'
 
 export const enabled = !!(config.porchUrl && config.porchToken)
 
@@ -200,10 +201,27 @@ async function onMessage(m) {
     if (m.priority !== 'high' && m.kind !== 'alert') return
   }
   if (phoneNotify && worthACall(m, forMe)) {
-    const ring = underDailyCap()
-    if (!ring) log(`porch call limit reached today; ${m.from}'s message waits for the next call`)
+    // The rules only pick which posts to think about; the call gate decides whether
+    // to ring now, hold it for the next call, or drop it.
+    const g = await judgeCall(m)
+    log(`call gate: ${g.decision} for ${m.from}'s post (${g.reason})`)
+    if (g.decision === 'skip') return
+    const ring = g.decision === 'call' && underDailyCap()
+    if (g.decision === 'call' && !ring) log(`porch call limit reached today; ${m.from}'s message waits for the next call`)
     phoneNotify({ kind: 'hub', ring, text: `${m.from} posted in ${m.room}: ${clip(m.text, 600)}` })
   }
+}
+
+let judge = callgate.decide
+export function setCallGate(fn) { judge = fn }
+async function judgeCall(m) {
+  const around = await Promise.all([
+    list({ to: me.name, limit: 8 }).catch(() => []),
+    list({ room: m.room, limit: 6 }).catch(() => []),
+  ])
+  const seen = new Set()
+  const recent = around.flat().filter(r => r.id !== m.id && !seen.has(r.id) && seen.add(r.id)).sort((a, b) => a.id - b.id).slice(-12)
+  return judge({ m, recent, notes: memory.context({ calls: false }) })
 }
 
 function worthACall(m, forMe) {

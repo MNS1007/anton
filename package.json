@@ -9,7 +9,8 @@
     "test": "node --test test/*.test.js",
     "check-live": "node scripts/live-call-check.js",
     "bench-calls": "node scripts/bench/run.js",
-    "bench-scenarios": "node scripts/bench/make.js"
+    "bench-scenarios": "node scripts/bench/make.js",
+    "check-call-gate": "node scripts/check-call-gate.js"
   },
   "license": "MIT",
   "type": "module",
