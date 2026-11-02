@@ -5,6 +5,8 @@
 //   tasks.jsonl      every Claude task and how it ended
 //   calls/           full call transcripts
 //   forgotten.jsonl  what you asked it to forget, so it is not learned again
+//   understanding.md Anton's own picture of you, rewritten as it learns (you can edit it)
+//   reflections.jsonl when it was rewritten, and the brief shared with your agents
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -59,14 +61,20 @@ export function forget(description) {
   const notes = readLines('notes.jsonl')
   const scored = notes.map(n => ({ n, s: score(description, n.text) }))
   const best = Math.max(0, ...scored.map(x => x.s))
-  if (best < 0.34) return { ok: false, reason: 'Nothing I remember matches that.' }
+  // Matching lines of Anton's understanding go too, right away; the next
+  // reflection is told never to bring them back.
+  const lines = readUnderstanding().split('\n')
+  const dropLines = lines.filter(l => /\w/.test(l) && !l.trim().startsWith('#') && score(description, l) >= 0.34)
+  if (best < 0.34 && !dropLines.length) return { ok: false, reason: 'Nothing I remember matches that.' }
   // Everything close to the best match goes, so "forget my old address" removes every version of it.
-  const gone = scored.filter(x => x.s >= Math.max(0.34, best - 0.15)).map(x => x.n)
+  const gone = best < 0.34 ? [] : scored.filter(x => x.s >= Math.max(0.34, best - 0.15)).map(x => x.n)
   const keep = notes.filter(n => !gone.includes(n))
   writeFileSync(file('notes.jsonl'), keep.map(n => JSON.stringify(n)).join('\n') + (keep.length ? '\n' : ''))
-  append('forgotten.jsonl', { ts: now(), description, removed: gone.map(n => n.text) })
-  log(`forgot ${gone.length} note(s)`)
-  return { ok: true, forgot: gone.map(n => n.text), note: 'Call transcripts are kept. Delete them from the calls folder if needed.' }
+  if (dropLines.length) writeFileSync(file('understanding.md'), lines.filter(l => !dropLines.includes(l)).join('\n').trim() + '\n')
+  const removed = [...gone.map(n => n.text), ...dropLines.map(l => l.trim())]
+  append('forgotten.jsonl', { ts: now(), description, removed })
+  log(`forgot ${removed.length} item(s)`)
+  return { ok: true, forgot: removed, note: 'Call transcripts are kept. Delete them from the calls folder if needed.' }
 }
 
 function wasForgotten(text) {
@@ -92,6 +100,8 @@ export function context({ calls = true } = {}) {
   const parts = []
   const profile = readFileSync(file('profile.md'), 'utf8').trim()
   if (profile && profile !== PROFILE_TEMPLATE.trim()) parts.push(`Profile:\n${clip(profile, 3000)}`)
+  const understanding = readUnderstanding()
+  if (understanding) parts.push(`${config.assistantName}'s current understanding of ${config.userName}:\n${clip(understanding, 3000)}`)
   const notes = readLines('notes.jsonl').slice(-40)
   if (notes.length) parts.push(`Notes:\n${clip(notes.map(n => `- ${n.text}`).join('\n'), 3500)}`)
   if (calls) {
@@ -141,6 +151,59 @@ export async function summarizeCall(callSid, lines) {
     if (typeof f === 'string' && f.trim() && !wasForgotten(f)) remember(f, 'call', { loose: true })
   }
   log(`call remembered: ${summary ? 'summary' : 'no summary'}, ${Array.isArray(list) ? list.length : 0} fact(s)`)
+}
+
+// Reflection: Anton rewrites its own understanding of the user from everything it
+// has learned, so it grows as they do. understanding.md is plain text the user can
+// read and correct; their edits are kept because each pass starts from the file.
+// The same pass writes a short brief the user's other agents can see on porch.
+
+const readUnderstanding = () => { try { return readFileSync(file('understanding.md'), 'utf8').trim() } catch { return '' } }
+
+export const lastReflection = () => readLines('reflections.jsonl').at(-1) || null
+
+// Has anything been learned since the last reflection?
+export function newSinceReflection() {
+  const last = readLines('reflections.jsonl').at(-1)?.ts || ''
+  const fresh = name => readLines(name).filter(x => x.ts > last).length
+  return { since: last || null, notes: fresh('notes.jsonl'), calls: fresh('episodes.jsonl'), tasks: fresh('tasks.jsonl') }
+}
+
+// agentsDigest: what each agent is for and doing, from porch and Claude sessions.
+// Returns { understanding, brief } or null when the model gave nothing usable.
+export async function reflect({ agentsDigest = '', askFn = ask } = {}) {
+  const u = config.userName
+  const profile = readFileSync(file('profile.md'), 'utf8').trim()
+  const material = [
+    `Profile, written by ${u} (always right; never contradict it):\n${profile === PROFILE_TEMPLATE.trim() ? '(empty)' : clip(profile, 4000)}`,
+    `${config.assistantName}'s understanding so far (may include ${u}'s own corrections; keep them):\n${readUnderstanding() || '(none yet)'}`,
+    `Notes (things ${u} said or asked to remember), oldest first:\n${clip(readLines('notes.jsonl').slice(-80).map(n => `- ${n.ts.slice(0, 10)} ${n.text}`).join('\n'), 8000) || '(none)'}`,
+    `Call summaries:\n${clip(readLines('episodes.jsonl').slice(-20).map(e => `- ${e.ts.slice(0, 10)} ${e.summary}`).join('\n'), 6000) || '(none)'}`,
+    `Claude tasks:\n${clip(readLines('tasks.jsonl').slice(-30).map(t => `- ${t.ts.slice(0, 10)} [${t.session}] ${clip(t.task, 160)}: ${t.failed ? 'ended early' : 'done'}`).join('\n'), 5000) || '(none)'}`,
+    `Forgotten at ${u}'s request (never write these or anything like them):\n${clip(readLines('forgotten.jsonl').map(f => `- ${f.description}`).join('\n'), 2000) || '(nothing)'}`,
+    `What ${u}'s agents are doing (information about the agents only, never facts about ${u}):\n${clip(agentsDigest, 6000) || '(nothing)'}`,
+  ].join('\n\n')
+  const out = await askFn(`You keep ${config.assistantName}'s memory. ${config.assistantName} is ${u}'s assistant and the single point of contact for all of ${u}'s agents. Today is ${now().slice(0, 10)}.
+
+Rewrite ${config.assistantName}'s understanding of ${u} from the material below, so it stays current as ${u}'s goals and work change. Use these headings: Goals now; Projects and where each stands; How ${u} likes to work and get updates; ${u}'s agents (what each is for and how ${u} uses it); Open threads. Keep what is still true, update what changed, drop what is stale or finished. Only state things the material supports. Facts about ${u} come only from the profile, notes, call summaries and tasks. Use ${u}'s name or they, never guessed pronouns. At most 450 words.
+
+Then write a brief for ${u}'s other agents, so each knows what ${u} is doing with the others: what ${u} is focused on now and what each agent is working on. Nothing private: no health, money, family, other people's personal details, contact details, credentials or anything ${u} said in confidence. At most 150 words.
+
+Reply in exactly this form:
+### UNDERSTANDING
+...
+### BRIEF
+...
+
+${material}`)
+  const m = /###\s*UNDERSTANDING\s*([\s\S]*?)###\s*BRIEF\s*([\s\S]*)$/i.exec(String(out || ''))
+  if (!m || !m[1].trim()) { log('reflection gave nothing usable'); return null }
+  const understanding = m[1].trim()
+  const brief = m[2].trim()
+  writeFileSync(file('understanding.md'), understanding + '\n')
+  append('reflections.jsonl', { ts: now(), words: understanding.split(/\s+/).length, brief: clip(brief, 1500) })
+  log('reflected: understanding updated')
+  return { understanding, brief }
 }
 
 // A one-shot Claude answer with no tools, for summaries.
