@@ -14,6 +14,7 @@ import * as hub from './hub.js'
 import * as memory from './memory.js'
 import * as reflection from './reflect.js'
 import * as longrun from './longrun.js'
+import * as vault from './vault.js'
 
 const { phone } = checkConfig()
 
@@ -98,6 +99,8 @@ server.listen(config.port, '127.0.0.1', async () => {
       if (config.setWebhook) await pointNumberAt(`${config.publicUrl}/voice`)
     }
     if (hub.enabled) await hub.start(phone ? caller.notify : null)
+    // Vault handles for sessions the owner approved, in memory only.
+    if (hub.enabled) vault.start()
     reflection.start()
     longrun.resume()
   } catch (err) {
