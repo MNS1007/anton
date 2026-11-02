@@ -90,3 +90,23 @@ test('bad requests get plain answers', () => {
   assert.match(longrun.startRun({ session: 'main', hours: 100, goal: 'g' }).reason, /72 hours/)
   assert.match(longrun.startRun({ session: 'main', hours: 1, goal: ' ' }).reason, /what the run is for/)
 })
+
+test('the round cap scales with the run, so fast rounds do not end it early', () => {
+  longrun.setDeps({ ask: () => ({ ok: true }) })
+  longrun.startRun({ session: 'main', hours: 24, goal: 'g' })
+  const saved = JSON.parse(readFileSync(join(process.env.ANTON_HOME, 'runs.json'), 'utf8'))
+  assert.ok(saved[0].maxRounds >= 24 * 120)
+  longrun.stopRun('main')
+})
+
+test('notes over the size limit get compressed first', async () => {
+  const notes = join(process.env.ANTON_HOME, 'runs', 'main-notes.md')
+  writeFileSync(notes, 'x'.repeat(60 * 1024))
+  const seen = []
+  longrun.setDeps({ ask: (p, { onDone }) => { seen.push(p); if (seen.length < 2) setTimeout(() => onDone('step', null), 0); return { ok: true } } })
+  longrun.startRun({ session: 'main', hours: 5, goal: 'g' })
+  for (let i = 0; i < 50 && seen.length < 2; i++) await tick(5)
+  assert.match(seen[0], /Keep it compact, under about 40 KB/)
+  assert.match(seen[1], /The notes are 60 KB, over the 40 KB limit: this round, first compress them/)
+  longrun.stopRun('main')
+})

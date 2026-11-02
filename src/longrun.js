@@ -4,7 +4,7 @@
 // is up or the session says the work is complete. The session keeps working notes
 // in a file it reads every round, so nothing is lost between rounds. Rounds are
 // quiet; the user hears once, when the run ends. Runs survive a restart.
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { config } from './config.js'
 import { log } from './log.js'
@@ -26,6 +26,10 @@ function save() {
 
 const hoursLeft = r => Math.max(0, (r.until - deps.now()) / 3600e3)
 
+// Notes are read in full every round, so they must stay small.
+const NOTES_KB = 40
+const notesKB = r => { try { return Math.round(statSync(r.notes).size / 1024) } catch { return 0 } }
+
 function prompt(r) {
   const left = hoursLeft(r)
   // The final round has to start while there is still time for one more round.
@@ -37,10 +41,10 @@ function prompt(r) {
 Goal:
 ${r.goal}
 
-Keep your working notes in ${r.notes}: what you have learned, what you are pursuing, what you ruled out and why, and what to do next. Read it at the start of every round and update it at the end. Each round, pick the single most valuable next step, do it well, and stop. You will be called again for the next round.
+Keep your working notes in ${r.notes}: what you have learned, what you are pursuing, what you ruled out and why, and what to do next. Read it at the start of every round and update it at the end. Keep it compact, under about ${NOTES_KB} KB: the current best answer first, then open threads; fold older round-by-round detail into a short log instead of letting it grow. Each round, pick the single most valuable next step, do it well, and stop. You will be called again for the next round.
 
 If something needs ${config.userName}'s approval (money, downloads, contacting people, account changes), do not wait for it and do not stop: write it under a "## Waiting on ${config.userName}" heading in the notes, with what you would do and why, and move on to the next most valuable thing you can do without it.`
-    : `[Long run, round ${r.rounds + 1}. About ${left.toFixed(1)} hours left.] Read ${r.notes}, pick the most valuable next step toward the goal, do it, and update the notes.`
+    : `[Long run, round ${r.rounds + 1}. About ${left.toFixed(1)} hours left.] Read ${r.notes}, pick the most valuable next step toward the goal, do it, and update the notes.${notesKB(r) > NOTES_KB ? ` The notes are ${notesKB(r)} KB, over the ${NOTES_KB} KB limit: this round, first compress them (keep the best answer, scoreboard, open threads and the reasons ideas died; fold the rest into a short log), then continue.` : ''}`
   const end = last
     ? `\n\nTime is almost up. Write the final result now: update the notes, then reply with a summary ${config.userName} can act on, and end your reply with ${DONE}.`
     : r.stopEarly
@@ -98,7 +102,9 @@ function finish(r, why) {
 
 // stopEarly: let the session end the run when it thinks the goal is met. Off by
 // default: a run asked to last 24 hours lasts 24 hours unless someone stops it.
-export function startRun({ session, hours, goal, maxRounds = 1000, stopEarly = false }) {
+// maxRounds is only a safety net against a broken loop; by default it allows one
+// round every 30 seconds for the whole run, so fast rounds never end a run early.
+export function startRun({ session, hours, goal, maxRounds, stopEarly = false }) {
   const s = agent.status(session)
   if (!s.name) return { ok: false, reason: `No session named ${session}. Create it first.` }
   if (s.porchAgent) return { ok: false, reason: `${s.name} is another agent on porch; long runs are for Claude sessions Anton runs.` }
@@ -108,7 +114,7 @@ export function startRun({ session, hours, goal, maxRounds = 1000, stopEarly = f
   if (!String(goal || '').trim()) return { ok: false, reason: 'Say what the run is for.' }
   const dir = join(config.antonHome, 'runs')
   mkdirSync(dir, { recursive: true })
-  const r = { session: s.name, goal: String(goal), until: deps.now() + h * 3600e3, rounds: 0, started: deps.now(), notes: join(dir, `${s.name}-notes.md`), last: '', maxRounds, stopEarly: !!stopEarly }
+  const r = { session: s.name, goal: String(goal), until: deps.now() + h * 3600e3, rounds: 0, started: deps.now(), notes: join(dir, `${s.name}-notes.md`), last: '', maxRounds: maxRounds || Math.max(200, Math.ceil(h * 120)), stopEarly: !!stopEarly }
   runs.set(r.session, r)
   save()
   log(`[${r.session}] long run started for ${h} hours`)
