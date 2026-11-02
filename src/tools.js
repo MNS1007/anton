@@ -180,7 +180,7 @@ export function callTools({ onHangup = () => {} } = {}) {
       case 'find_claude_sessions': return { sessions: await agent.findClaudeSessions({ folder: args.folder }) }
       case 'attach_session': return remember(await agent.attachSession({ name: args.name, purpose: args.purpose, claudeSessionId: String(args.claude_session_id || '') }))
       case 'link_agent_session': return remember(agent.linkAgent({ name: args.name, agent: args.agent, purpose: args.purpose }))
-      case 'list_agents': outsideTurn = ++clock; return await agents.listAgents()
+      case 'list_agents': return await agents.listAgents()
       case 'ask_agent': return remember(await agents.askAgent(args.agent, String(args.message || '')))
       case 'agent_work': outsideTurn = ++clock; return await agents.agentWork(args.agent, { query: args.query, limit: args.limit })
       case 'reset_session': return remember(agent.resetSession(pick(args.session)))

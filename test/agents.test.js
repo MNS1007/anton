@@ -62,7 +62,8 @@ test('lists Claude sessions and porch agents, not Anton or the owner', async () 
   assert.ok(names.includes('main'))
   assert.ok(names.includes('muse') && names.includes('grokbot'))
   assert.ok(!names.includes('anton') && !names.includes('me'))
-  assert.match(all.find(a => a.name === 'grokbot').latest, /Applied to 15/)
+  assert.match(all.find(a => a.name === 'grokbot').latest, /posted in jobs/)
+  assert.doesNotMatch(JSON.stringify(all), /Applied to 15/, 'no post text, so listing is not outside content')
 })
 
 test('reads an agent\'s work in full, with its links', async () => {

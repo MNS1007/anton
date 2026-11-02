@@ -36,7 +36,7 @@ export async function listAgents() {
         reach: 'Runs on its own schedule. A task posted for it is picked up the next time it runs; Anton tells you when it replies.',
         lastSeen: a.lastSeen,
         online: a.online,
-        latest: last ? `${last.ts.slice(0, 16).replace('T', ' ')} in ${last.room}: ${clip(last.text, 300)}` : 'nothing posted yet',
+        latest: last ? `posted in ${last.room} at ${last.ts.slice(0, 16).replace('T', ' ')} (read it with agent_work)` : 'nothing posted yet',
       }
     }))
   } catch (err) {
