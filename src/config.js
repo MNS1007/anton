@@ -71,6 +71,8 @@ export const config = {
   antonHome: resolve(expandHome(env('ANTON_HOME', '~/.anton'))),
   maxRunning: Number(env('MAX_RUNNING', 3)),
   memoryModel: env('MEMORY_MODEL', 'haiku'),
+  // Least hours between reflections when something new was learned. 0 turns reflection off.
+  reflectHours: Number(env('REFLECT_HOURS', 6)),
 
   porchUrl: env('PORCH_URL', '').replace(/\/$/, ''),
   porchToken: env('PORCH_TOKEN'),
@@ -78,4 +80,6 @@ export const config = {
   porchRoom: env('PORCH_ROOM', 'anton'),
   porchCallOn: env('PORCH_CALL_ON', 'for-me,urgent').split(/[ ,]+/).filter(Boolean),
   porchCallsPerDay: Number(env('PORCH_CALLS_PER_DAY', 4)),
+  // Room where Anton shares what you are working on with your other agents. none turns it off.
+  porchContextRoom: env('PORCH_CONTEXT_ROOM', 'context').replace(/^none$/i, ''),
 }

@@ -12,6 +12,7 @@ import * as sip from './sip.js'
 import { startTunnel, pointNumberAt } from './tunnel.js'
 import * as hub from './hub.js'
 import * as memory from './memory.js'
+import * as reflection from './reflect.js'
 
 const { phone } = checkConfig()
 
@@ -95,6 +96,7 @@ server.listen(config.port, '127.0.0.1', async () => {
       if (config.setWebhook) await pointNumberAt(`${config.publicUrl}/voice`)
     }
     if (hub.enabled) await hub.start(phone ? caller.notify : null)
+    reflection.start()
   } catch (err) {
     log(`setup failed: ${err.message}`)
     process.exit(1)

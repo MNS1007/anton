@@ -9,6 +9,7 @@ import { log } from './log.js'
 import * as agent from './agent.js'
 import * as memory from './memory.js'
 import * as directory from './agents.js'
+import * as reflection from './reflect.js'
 
 export const enabled = !!(config.porchUrl && config.porchToken)
 
@@ -156,7 +157,8 @@ const HELP = `Post a task for anton and Claude does it in the main session. Othe
 - "claude sessions" to list Claude Code sessions saved on the laptop, then "attach <id> as <name>"
 - "yes" / "no" to answer a permission question (add the session name if several wait)
 - "stop <session>", "reset <session>" (fresh conversation), "remove session <name>"
-- "remember <something>", "recall <words>", "forget <description>"`
+- "remember <something>", "recall <words>", "forget <description>"
+- "reflect" to have Anton update its understanding of you now and share the brief with your agents`
 
 async function command(m) {
   const text = m.text.trim()
@@ -185,6 +187,10 @@ async function command(m) {
   if ((mm = /^forget\s+([\s\S]+)$/i.exec(text))) {
     r = memory.forget(mm[1])
     return reply(m, r.ok ? `Forgot:\n${r.forgot.map(f => `- ${f}`).join('\n')}` : r.reason)
+  }
+  if (/^reflect$/i.test(text)) {
+    const out = await reflection.reflectNow()
+    return reply(m, out ? `Updated. My understanding of you now:\n\n${out.understanding}` : 'Nothing came out of that reflection. Try again later.')
   }
   if (/^agents\??$/i.test(text)) {
     const all = (await directory.listAgents()).agents
