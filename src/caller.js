@@ -14,15 +14,52 @@ let outbound = null     // { sid, connected }
 let retryTimer = null
 let attempts = 0
 
+// A promised callback: the sessions the user is waiting on. Their results are
+// held, and one call goes out when the last of them finishes.
+let callback = null // { waiting: Set<session>, note }
+
+export function callBackWhenDone(sessions, note = '') {
+  const waiting = new Set(sessions)
+  if (!waiting.size) return { ok: false, reason: 'Nothing is running, so there is nothing to wait for.' }
+  callback = { waiting, note }
+  log(`will call back when ${[...waiting].join(', ')} finish`)
+  return { ok: true, waiting: [...waiting], note: `I will call when ${[...waiting].join(', ')} ${waiting.size > 1 ? 'have all' : 'has'} finished.` }
+}
+
+export const pendingCallback = () => callback && { waiting: [...callback.waiting], note: callback.note }
+
+const finishes = notice => notice.kind === 'done' || notice.kind === 'failed'
+
+// Places the call; tests swap it out so nothing is dialled.
+let dial = () => placeCall()
+export function setDialer(fn) { dial = fn }
+export const heldUpdates = () => [...queue]
+
 // ring: false keeps the update for the next call without placing one.
 export function notify(notice) {
   log(`update: ${notice.kind}`)
   if (active) {
+    if (callback && finishes(notice)) callback.waiting.delete(notice.session)
+    if (callback && !callback.waiting.size) callback = null
     active.inject(notice.text)
     return
   }
   queue.push(notice.text)
-  if (notice.ring !== false && !outbound && !retryTimer) placeCall()
+  let ring = notice.ring !== false
+  if (callback && finishes(notice) && callback.waiting.has(notice.session)) {
+    callback.waiting.delete(notice.session)
+    if (callback.waiting.size) {
+      log(`holding ${notice.session}'s result; still waiting on ${[...callback.waiting].join(', ')}`)
+      ring = false
+    } else {
+      queue.unshift(`You asked me to call when this was done${callback.note ? ` (${callback.note})` : ''}.`)
+      callback = null
+    }
+  } else if (callback && notice.kind !== 'permission') {
+    // Other news waits for the promised call, unless it needs the user's answer.
+    ring = false
+  }
+  if (ring && !outbound && !retryTimer) dial()
 }
 
 // Called by the bridge when a call connects. Returns what to tell the user first.
