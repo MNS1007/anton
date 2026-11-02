@@ -188,7 +188,7 @@ All settings live in `.env`. See `.env.example` for the full list.
 | --- | --- | --- |
 | `WORK_DIR` | where you start Anton | Folder Claude works in. Use the folder that holds all your repos so Claude can reach any of them and clone new ones there |
 | `EXTRA_DIRS` | empty | More folders Claude may use, separated by `;` |
-| `PERMISSION_MODE` | `acceptEdits` | Claude Code permission mode. Anything it would normally ask about is asked on the phone |
+| `PERMISSION_MODE` | `auto` | Claude Code permission mode. `auto` lets a model approve or deny each step and asks you on the phone only when it cannot decide. Other values: `acceptEdits`, `default`, `plan` |
 | `ALLOWED_TOOLS` | empty | Extra tools Claude can use without asking, like `Bash(npm test)` |
 | `MAX_RUNNING` | `3` | Most sessions working at the same time |
 | `ANTON_HOME` | `~/.anton` | Where sessions and memory are kept |

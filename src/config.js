@@ -57,7 +57,7 @@ export const config = {
 
   workDir: resolve(expandHome(env('WORK_DIR', process.cwd()))),
   extraDirs: env('EXTRA_DIRS', '').split(/[;,]/).map(s => s.trim()).filter(Boolean).map(p => resolve(expandHome(p))),
-  permissionMode: env('PERMISSION_MODE', 'acceptEdits'),
+  permissionMode: env('PERMISSION_MODE', 'auto'),
   allowedTools: env('ALLOWED_TOOLS', '').split(/[ ,]+/).filter(Boolean),
 
   port: Number(env('PORT', 8787)),
@@ -78,6 +78,8 @@ export const config = {
   porchToken: env('PORCH_TOKEN'),
   porchBoss: env('PORCH_BOSS', 'me'),
   porchRoom: env('PORCH_ROOM', ''),
+  // Anton's sessions show on porch as members of this family, like claude-code/main.
+  claudeFamily: env('CLAUDE_FAMILY', 'claude-code'),
   porchCallOn: env('PORCH_CALL_ON', 'for-me,urgent').split(/[ ,]+/).filter(Boolean),
   porchCallsPerDay: Number(env('PORCH_CALLS_PER_DAY', 4)),
 }
