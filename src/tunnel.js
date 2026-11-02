@@ -37,6 +37,11 @@ export async function pointNumberAt(voiceUrl) {
   const client = twilio(config.twilioSid, config.twilioToken)
   const [number] = await client.incomingPhoneNumbers.list({ phoneNumber: config.twilioNumber, limit: 1 })
   if (!number) throw new Error(`TWILIO_NUMBER ${config.twilioNumber} is not on this Twilio account`)
+  // A number on a SIP trunk rings OpenAI directly (src/sip.js); its voice URL is not used.
+  if (number.trunkSid) {
+    log('Twilio number is on a SIP trunk, so incoming calls go to GPT-Live over SIP')
+    return
+  }
   // Update by sid: twilio 6 list results lose their sid and cannot update themselves.
   await client.incomingPhoneNumbers(number.sid).update({ voiceUrl, voiceMethod: 'POST' })
   log('Twilio number now points at this laptop')
