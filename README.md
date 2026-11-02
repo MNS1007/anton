@@ -18,7 +18,7 @@ you (phone) <-> Twilio <-> Anton on your laptop <-> OpenAI Realtime (the voice)
 - **Several Claude sessions.** Keep one session per piece of work ("resume", "porch-ui"), run them side by side, and pick up a Claude Code session you started in a terminal.
 - **All your agents in one place.** Connect Anton to a [porch](https://github.com/MNS1007/porch) hub and it knows every agent there (a research agent, a job agent, a Claude Code terminal). Ask what one has done and Anton reads its work in full and explains it. Say "do this with Grok Bot" and Anton sends it there. No phone needed for that part.
 - **Keeps your agents in the loop.** Anton shares a short note on porch about what you are working on and what each agent is doing, so none of them works in a silo.
-- **Grows with you.** Anton regularly rewrites its own understanding of your goals, projects and how you like to work, from what you tell it. You can read and correct it.
+- **A portrait of you that grows.** Anton keeps `me.md`: who you are, how you think, what you want in work and life, your values, your technical side and how to work with you. It is background for Anton and your agents, never read out to you. Anton rewrites it as it learns from you and from what your agents say when you ask them about yourself. You can read and correct it.
 
 ## Quick setup: paste this prompt
 
@@ -127,13 +127,13 @@ Anton keeps plain files in `~/.anton/memory`:
 | `tasks.jsonl` | Every Claude task, which session ran it, and how it ended |
 | `calls/` | Full transcripts of each call |
 | `forgotten.jsonl` | What you asked it to forget, so it is not learned again |
-| `understanding.md` | Anton's own picture of you: goals now, projects and where each stands, how you like to work, what each agent is for, open threads. Rewritten as it learns. Edit it to correct it |
-| `reflections.jsonl` | When the understanding was rewritten, and the brief shared with your agents |
+| `me.md` | Anton's portrait of you: who you are, how you think, what you want, values, technical side, how you work, how to work with you, right now, your agents, open questions. Rewritten as it learns. Edit it to correct it. (Older versions called it `understanding.md`; it is renamed on start.) |
+| `reflections.jsonl` | When the portrait was rewritten, and the brief shared with your agents |
 
-- At the start of every call Anton reads your profile, notes, recent calls and recent tasks. Claude gets your profile and notes with every task.
+- At the start of every call Anton reads your profile, portrait, notes, recent calls and recent tasks. Claude gets your profile, portrait and notes with every task. The portrait is background: Anton uses it to understand you and does not recite it.
 - After a call, Anton writes a summary and picks out lasting facts. Facts only come from your own words, never from agent posts or updates Anton read to you.
-- "Forget ..." removes matching notes and matching lines of the understanding, and later rewrites are told to leave it out. Transcripts stay until you delete them from `calls/`.
-- **Reflection.** When Anton has learned something new (a call, a note, a finished task), at most every `REFLECT_HOURS` (default 6) and at least once a day, it rewrites `understanding.md`. It starts from the current file, so your corrections stay. Facts about you only come from your profile, notes, calls and tasks; agent posts only tell it what the agents are doing. Post "reflect" on porch to run it now.
+- "Forget ..." removes matching notes and closely matching lines of the portrait, and later rewrites are told to leave it out. Transcripts stay until you delete them from `calls/`.
+- **Reflection.** When Anton has learned something new (a call, a note, a finished task), at most every `REFLECT_HOURS` (default 6) and at least once a day, it rewrites `me.md`. It starts from the current file, so your corrections stay. Your own words come first. When you ask an agent about yourself ("ask Claude what it knows about me"), its answer feeds the portrait too, marked as second-hand. Other agent posts only tell it what the agents are doing. Post "reflect" on porch to run it now.
 - Summaries are written by Claude (`MEMORY_MODEL`, default `haiku`) on your normal Claude plan.
 
 ## Sessions
@@ -200,7 +200,7 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `QUIET_HOURS` | empty | No calls in this window, like `22-7`. Calls wait until it ends |
 | `VOICE` | `cedar` | OpenAI voice |
 | `VOICE_ENGINE` | `realtime` | `realtime` or `live` (GPT-Live). See [Voice engines](#voice-engines) |
-| `LIVE_VOICE` | `marin` | Voice for GPT-Live |
+| `LIVE_VOICE` | `cedar` | Voice for GPT-Live |
 | `LIVE_BACKEND_MODEL` | `gpt-5.5` | Model GPT-Live hands tool calls to |
 | `OPENAI_WEBHOOK_SECRET` | empty | Only for GPT-Live over SIP |
 | `ASSISTANT_NAME` | `Anton` | Rename your assistant |
