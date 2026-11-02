@@ -36,16 +36,17 @@ function prompt(r) {
   // The final round has to start while there is still time for one more round.
   const perRound = r.rounds ? (deps.now() - r.started) / r.rounds / 3600e3 : 0
   const last = left < Math.max(0.5, perRound * 1.2)
-  const head = r.rounds === 0
-    ? `[Long run from ${config.userName}: you have about ${left.toFixed(1)} hours for this. Work on your own; nobody is waiting on each step.]
+  // Every round is a fresh conversation (a long-resumed one starts repeating
+  // itself), so each prompt carries the goal and the rules, and the notes carry
+  // everything learned so far.
+  const head = `[Long run from ${config.userName}, round ${r.rounds + 1}. About ${left.toFixed(1)} hours of the run are left. Work on your own; nobody is waiting on each step. This round is a fresh conversation: all the work so far is in your notes, so read them first.]
 
 Goal:
 ${r.goal}
 
-Keep your working notes in ${r.notes}: what you have learned, what you are pursuing, what you ruled out and why, and what to do next. Read it at the start of every round and update it at the end. Keep it compact, under about ${NOTES_KB} KB: the current best answer first, then open threads; fold older round-by-round detail into a short log instead of letting it grow. Each round, pick the single most valuable next step, do it well, and stop. You will be called again for the next round.
+Your working notes are ${r.notes}${r.rounds === 0 ? ' (start them now)' : ''}: what you have learned, what you are pursuing, what you ruled out and why, and what to do next. Read them at the start of the round and update them at the end. Keep them compact, under about ${NOTES_KB} KB: the current best answer first, then open threads; fold older round-by-round detail into a short log instead of letting it grow. This round, pick the single most valuable next step, do it well, update the notes, and stop. You will be called again for the next round.
 
-If something needs ${config.userName}'s approval (money, downloads, contacting people, account changes), do not wait for it and do not stop: write it under a "## Waiting on ${config.userName}" heading in the notes, with what you would do and why, and move on to the next most valuable thing you can do without it.`
-    : `[Long run, round ${r.rounds + 1}. About ${left.toFixed(1)} hours left.] Read ${r.notes}, pick the most valuable next step toward the goal, do it, and update the notes.${notesKB(r) > NOTES_KB ? ` The notes are ${notesKB(r)} KB, over the ${NOTES_KB} KB limit: this round, first compress them (keep the best answer, scoreboard, open threads and the reasons ideas died; fold the rest into a short log), then continue.` : ''}`
+If something needs ${config.userName}'s approval (money, downloads, contacting people, account changes), do not wait for it and do not stop: write it under a "## Waiting on ${config.userName}" heading in the notes, with what you would do and why, and move on to the next most valuable thing you can do without it.${notesKB(r) > NOTES_KB ? `\n\nThe notes are ${notesKB(r)} KB, over the ${NOTES_KB} KB limit: this round, first compress them (keep the best answer, scoreboard, open threads and the reasons ideas died; fold the rest into a short log), then continue.` : ''}`
   const idle = !last && (r.idle || 0) >= 2
     ? `\n\nThe last ${r.idle} rounds left the notes unchanged, which wastes the run. No waiting, no scheduled checkpoints, no "nothing new" rounds. This round, do real work: bring in a new candidate from a space not yet considered, check the strongest objection to the best answer against a primary source, or make the best answer concretely better. Then update the notes.`
     : ''
@@ -65,6 +66,7 @@ function round(r) {
     session: r.session,
     label: `long run, round ${r.rounds + 1}`,
     queue: true,
+    fresh: true,
     onDone: (result, failed) => {
       r.rounds++
       r.last = String(result || failed || '').slice(-4000)

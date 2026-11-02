@@ -288,7 +288,7 @@ const runningCount = () => [...sessions.values()].filter(s => s.running && !s.po
 // onDone(result, failed) receives the outcome instead of the phone.
 // readOnly: the task comes from another agent, not the user. The session can read
 // and answer but cannot change files or run anything, and asks the user nothing.
-export function ask(message, { session = 'main', label, queue = false, onDone, readOnly = false } = {}) {
+export function ask(message, { session = 'main', label, queue = false, onDone, readOnly = false, fresh = false } = {}) {
   const s = find(session)
   if (!s) return { ok: false, reason: `No session named ${session}. Create it first.` }
   // The other agent keeps its own queue, so follow-ups go straight through.
@@ -302,10 +302,10 @@ export function ask(message, { session = 'main', label, queue = false, onDone, r
       return { ok: false, reason: s.running ? `${s.name} is still working on its last task. Stop it, wait, or use another session.` : `${config.maxRunning} sessions are already working. Wait for one to finish.` }
     }
     if (waiting.length >= 10) return { ok: false, reason: 'Ten tasks are already waiting. Try again later.' }
-    waiting.push({ name: s.name, message, label, onDone, readOnly })
+    waiting.push({ name: s.name, message, label, onDone, readOnly, fresh })
     return { ok: true, session: s.name, queued: waiting.filter(w => w.name === s.name).length }
   }
-  run(s, message, label, onDone, readOnly)
+  run(s, message, label, onDone, readOnly, fresh)
   return { ok: true, session: s.name }
 }
 
@@ -316,7 +316,7 @@ function pump() {
     if (!s) { waiting.splice(i--, 1); continue }
     if (s.running) continue
     waiting.splice(i--, 1)
-    run(s, w.message, w.label, w.onDone, w.readOnly)
+    run(s, w.message, w.label, w.onDone, w.readOnly, w.fresh)
   }
 }
 
@@ -369,7 +369,7 @@ const WRITE_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'Powe
   'mcp__porch__post_message', 'mcp__porch__send_dm', 'mcp__porch__update_memory_section', 'mcp__porch__replace_memory']
 const denyAll = async () => ({ behavior: 'deny', message: 'This request came from another agent, so this session is read-only. Say what you would do and that the user has to approve it.' })
 
-async function run(s, message, label, onDone, readOnly = false) {
+async function run(s, message, label, onDone, readOnly = false, fresh = false) {
   s.running = true
   s.task = clip(label || message, 300)
   s.startedAt = Date.now()
@@ -388,8 +388,8 @@ async function run(s, message, label, onDone, readOnly = false) {
       options: {
         cwd: s.dir,
         additionalDirectories: config.extraDirs,
-        resume: s.claudeSessionId || s.forkFrom || undefined,
-        forkSession: !s.claudeSessionId && !!s.forkFrom,
+        resume: fresh ? undefined : s.claudeSessionId || s.forkFrom || undefined,
+        forkSession: !fresh && !s.claudeSessionId && !!s.forkFrom,
         permissionMode: readOnly ? 'default' : config.permissionMode,
         allowedTools: readOnly ? ['Read', 'Glob', 'Grep', ...(hubOn ? porchTools : [])] : hubOn ? [...config.allowedTools, ...porchTools] : config.allowedTools,
         mcpServers: hubOn ? { porch: { type: 'http', url: `${config.porchUrl}/mcp`, headers: { Authorization: `Bearer ${config.porchToken}` } } } : undefined,
