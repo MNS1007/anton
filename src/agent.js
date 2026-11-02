@@ -31,6 +31,10 @@ function systemNote(s) {
 let notify = () => {}
 export function onNotify(fn) { notify = fn }
 
+// Porch lists Anton's sessions; it hears when one is added or removed.
+let sessionsChanged = () => {}
+export function onSessionsChanged(fn) { sessionsChanged = fn }
+
 // Memory plugs in here: Claude gets the basics about the user, and every
 // finished task is logged.
 let finishFn = () => {}
@@ -131,17 +135,18 @@ export function hasPendingPermission() { return pendingPermissions().length > 0 
 const isDir = p => existsSync(p) && statSync(p).isDirectory()
 
 // A folder for a session, the way someone would say it: a full path, a folder
-// inside WORK_DIR, a folder WORK_DIR sits in ("my source folder" when WORK_DIR is
-// source\repos), or one in the home folder. A new folder is made (inside WORK_DIR)
-// only when create is true, so a misheard name never makes an empty folder.
+// inside WORK_DIR, or one in the home folder. WORK_DIR is the user's main folder,
+// so its own name or the name of any folder it sits in means WORK_DIR itself
+// ("my source folder" when WORK_DIR is source\repos). A new folder is made (inside
+// WORK_DIR) only when create is true, so a misheard name never makes an empty folder.
 export function folderFor(dir, { create = false } = {}) {
   if (!dir) return config.workDir
   const said = String(dir).trim().replace(/\s+folder$/i, '')
   if (isAbsolute(said)) return isDir(resolve(said)) ? resolve(said) : null
   const want = said.toLowerCase()
   const candidates = [resolve(config.workDir, said)]
-  for (let up = config.workDir; dirname(up) !== up; up = dirname(up)) if (basename(up).toLowerCase() === want) candidates.push(up)
-  candidates.push(resolve(dirname(config.workDir), said), resolve(homedir(), said))
+  for (let up = config.workDir; dirname(up) !== up; up = dirname(up)) if (basename(up).toLowerCase() === want) candidates.push(config.workDir)
+  candidates.push(resolve(homedir(), said))
   const found = candidates.find(isDir)
   if (found) return found
   if (!create) return null
@@ -161,6 +166,7 @@ export function createSession({ name, purpose, folder, newFolder = false }) {
   sessions.set(n, blank({ name: n, purpose, dir }))
   save()
   log(`session created: ${n} in ${dir}`)
+  sessionsChanged()
   return { ok: true, name: n, folder: dir }
 }
 
@@ -190,6 +196,7 @@ export async function attachSession({ name, purpose, claudeSessionId }) {
   sessions.set(n, blank({ name: n, purpose: purpose || clip(info.customTitle || info.summary, 120), dir, forkFrom: claudeSessionId }))
   save()
   log(`session attached: ${n} continues ${claudeSessionId.slice(0, 8)}`)
+  sessionsChanged()
   return { ok: true, name: n, folder: dir }
 }
 
@@ -204,6 +211,7 @@ export function linkAgent({ name, agent: porchAgent, purpose }) {
   sessions.set(n, blank({ name: n, purpose: purpose || `the ${a} agent on porch`, porchAgent: a }))
   save()
   log(`session linked: ${n} talks to ${a} on porch`)
+  sessionsChanged()
   return { ok: true, name: n, agent: a }
 }
 
@@ -267,6 +275,7 @@ export function removeSession(name) {
   if (s.running) return { ok: false, reason: `${s.name} is still working. Stop it first.` }
   sessions.delete(s.name)
   save()
+  sessionsChanged(s.name)
   return { ok: true }
 }
 
