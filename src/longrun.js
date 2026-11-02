@@ -29,6 +29,7 @@ const hoursLeft = r => Math.max(0, (r.until - deps.now()) / 3600e3)
 // Notes are read in full every round, so they must stay small.
 const NOTES_KB = 40
 const notesKB = r => { try { return Math.round(statSync(r.notes).size / 1024) } catch { return 0 } }
+const notesStamp = r => { try { const s = statSync(r.notes); return `${s.size}:${s.mtimeMs}` } catch { return '' } }
 
 function prompt(r) {
   const left = hoursLeft(r)
@@ -45,11 +46,14 @@ Keep your working notes in ${r.notes}: what you have learned, what you are pursu
 
 If something needs ${config.userName}'s approval (money, downloads, contacting people, account changes), do not wait for it and do not stop: write it under a "## Waiting on ${config.userName}" heading in the notes, with what you would do and why, and move on to the next most valuable thing you can do without it.`
     : `[Long run, round ${r.rounds + 1}. About ${left.toFixed(1)} hours left.] Read ${r.notes}, pick the most valuable next step toward the goal, do it, and update the notes.${notesKB(r) > NOTES_KB ? ` The notes are ${notesKB(r)} KB, over the ${NOTES_KB} KB limit: this round, first compress them (keep the best answer, scoreboard, open threads and the reasons ideas died; fold the rest into a short log), then continue.` : ''}`
-  const end = last
+  const idle = !last && (r.idle || 0) >= 2
+    ? `\n\nThe last ${r.idle} rounds left the notes unchanged, which wastes the run. No waiting, no scheduled checkpoints, no "nothing new" rounds. This round, do real work: bring in a new candidate from a space not yet considered, check the strongest objection to the best answer against a primary source, or make the best answer concretely better. Then update the notes.`
+    : ''
+  const end = idle + (last
     ? `\n\nTime is almost up. Write the final result now: update the notes, then reply with a summary ${config.userName} can act on, and end your reply with ${DONE}.`
     : r.stopEarly
       ? `\n\nIf the goal is fully met and more rounds would not improve it, write the final result into the notes, reply with a summary, and end your reply with ${DONE}.`
-      : `\n\nThis run lasts the full time; there is no finishing early. If your current answer feels done, use the round to make it stronger: test the strongest objection, look for a better idea you have not considered, check a claim against a primary source, or widen the search. Keep the current best answer at the top of the notes.`
+      : `\n\nThis run lasts the full time; there is no finishing early. If your current answer feels done, use the round to make it stronger: test the strongest objection, look for a better idea you have not considered, check a claim against a primary source, or widen the search. Keep the current best answer at the top of the notes.`)
   return head + end
 }
 
@@ -68,6 +72,10 @@ function round(r) {
       if (failed) return finish(r, String(failed).includes('stopped') ? 'it was stopped' : `a round failed: ${String(failed).slice(0, 200)}`)
       if (String(result).includes(DONE) && (r.stopEarly || hoursLeft(r) <= 0.5)) return finish(r, 'the session finished the goal')
       shareAsks(r)
+      // A round that leaves the notes untouched did no work. Count them.
+      const stamp = notesStamp(r)
+      r.idle = stamp && stamp === r.stamp ? (r.idle || 0) + 1 : 0
+      r.stamp = stamp
       setTimeout(() => round(r), deps.pause)
     },
   })

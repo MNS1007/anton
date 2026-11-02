@@ -110,3 +110,15 @@ test('notes over the size limit get compressed first', async () => {
   assert.match(seen[1], /The notes are 60 KB, over the 40 KB limit: this round, first compress them/)
   longrun.stopRun('main')
 })
+
+test('rounds that leave the notes untouched get a push to do real work', async () => {
+  const notes = join(process.env.ANTON_HOME, 'runs', 'main-notes.md')
+  writeFileSync(notes, '# notes\n')
+  const seen = []
+  longrun.setDeps({ ask: (p, { onDone }) => { seen.push(p); if (seen.length < 4) setTimeout(() => onDone('nothing new', null), 0); return { ok: true } } })
+  longrun.startRun({ session: 'main', hours: 10, goal: 'g' })
+  for (let i = 0; i < 100 && seen.length < 4; i++) await tick(5)
+  assert.doesNotMatch(seen[1], /left the notes unchanged/, 'one quiet round is fine')
+  assert.match(seen[3], /The last 2 rounds left the notes unchanged/)
+  longrun.stopRun('main')
+})
