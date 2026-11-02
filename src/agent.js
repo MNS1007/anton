@@ -277,7 +277,9 @@ const runningCount = () => [...sessions.values()].filter(s => s.running && !s.po
 
 // session: which one (default main). queue: wait instead of refusing when busy.
 // onDone(result, failed) receives the outcome instead of the phone.
-export function ask(message, { session = 'main', label, queue = false, onDone } = {}) {
+// readOnly: the task comes from another agent, not the user. The session can read
+// and answer but cannot change files or run anything, and asks the user nothing.
+export function ask(message, { session = 'main', label, queue = false, onDone, readOnly = false } = {}) {
   const s = find(session)
   if (!s) return { ok: false, reason: `No session named ${session}. Create it first.` }
   // The other agent keeps its own queue, so follow-ups go straight through.
@@ -291,10 +293,10 @@ export function ask(message, { session = 'main', label, queue = false, onDone } 
       return { ok: false, reason: s.running ? `${s.name} is still working on its last task. Stop it, wait, or use another session.` : `${config.maxRunning} sessions are already working. Wait for one to finish.` }
     }
     if (waiting.length >= 10) return { ok: false, reason: 'Ten tasks are already waiting. Try again later.' }
-    waiting.push({ name: s.name, message, label, onDone })
+    waiting.push({ name: s.name, message, label, onDone, readOnly })
     return { ok: true, session: s.name, queued: waiting.filter(w => w.name === s.name).length }
   }
-  run(s, message, label, onDone)
+  run(s, message, label, onDone, readOnly)
   return { ok: true, session: s.name }
 }
 
@@ -305,7 +307,7 @@ function pump() {
     if (!s) { waiting.splice(i--, 1); continue }
     if (s.running) continue
     waiting.splice(i--, 1)
-    run(s, w.message, w.label, w.onDone)
+    run(s, w.message, w.label, w.onDone, w.readOnly)
   }
 }
 
@@ -353,7 +355,12 @@ function canUseToolFor(s) {
   }
 }
 
-async function run(s, message, label, onDone) {
+// What a read-only task may never use, whatever the user's allow rules say.
+const WRITE_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'PowerShell', 'KillShell', 'Task', 'Agent',
+  'mcp__porch__post_message', 'mcp__porch__send_dm', 'mcp__porch__update_memory_section', 'mcp__porch__replace_memory']
+const denyAll = async () => ({ behavior: 'deny', message: 'This request came from another agent, so this session is read-only. Say what you would do and that the user has to approve it.' })
+
+async function run(s, message, label, onDone, readOnly = false) {
   s.running = true
   s.task = clip(label || message, 300)
   s.startedAt = Date.now()
@@ -374,12 +381,12 @@ async function run(s, message, label, onDone) {
         additionalDirectories: config.extraDirs,
         resume: s.claudeSessionId || s.forkFrom || undefined,
         forkSession: !s.claudeSessionId && !!s.forkFrom,
-        permissionMode: config.permissionMode,
-        allowedTools: hubOn ? [...config.allowedTools, ...porchTools] : config.allowedTools,
+        permissionMode: readOnly ? 'default' : config.permissionMode,
+        allowedTools: readOnly ? ['Read', 'Glob', 'Grep', ...(hubOn ? porchTools : [])] : hubOn ? [...config.allowedTools, ...porchTools] : config.allowedTools,
         mcpServers: hubOn ? { porch: { type: 'http', url: `${config.porchUrl}/mcp`, headers: { Authorization: `Bearer ${config.porchToken}` } } } : undefined,
-        disallowedTools: ['AskUserQuestion'],
+        disallowedTools: readOnly ? ['AskUserQuestion', ...WRITE_TOOLS] : ['AskUserQuestion'],
         appendSystemPrompt: systemNote(s),
-        canUseTool: canUseToolFor(s),
+        canUseTool: readOnly ? denyAll : canUseToolFor(s),
         abortController: s.abort,
         // Marks Anton's own runs so the Claude Code hook does not report them twice.
         env: { ...process.env, ANTON_CHILD: '1' },
