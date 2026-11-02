@@ -158,7 +158,7 @@ const HELP = `Post a task for anton and Claude does it in the main session. Othe
 - "yes" / "no" to answer a permission question (add the session name if several wait)
 - "stop <session>", "reset <session>" (fresh conversation), "remove session <name>"
 - "remember <something>", "recall <words>", "forget <description>"
-- "reflect" to have Anton update its understanding of you now and share the brief with your agents`
+- "reflect" to have Anton update its portrait of you now and share the brief with your agents`
 
 async function command(m) {
   const text = m.text.trim()
@@ -190,7 +190,7 @@ async function command(m) {
   }
   if (/^reflect$/i.test(text)) {
     const out = await reflection.reflectNow()
-    return reply(m, out ? `Updated. My understanding of you now:\n\n${out.understanding}` : 'Nothing came out of that reflection. Try again later.')
+    return reply(m, out ? `Updated. Who you are, as I see it now:\n\n${out.portrait}` : 'Nothing came out of that reflection. Try again later.')
   }
   if (/^agents\??$/i.test(text)) {
     const all = (await directory.listAgents()).agents

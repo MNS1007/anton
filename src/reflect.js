@@ -1,8 +1,8 @@
-// Keeps Anton's understanding of the user current, and tells the user's other
+// Keeps Anton's portrait of the user current, and tells the user's other
 // agents what the user is doing with the rest of them.
 //
 // Every so often, when Anton has learned something new (a call, a note, a task),
-// it reflects: memory.reflect() rewrites understanding.md, and the short brief
+// it reflects: memory.reflect() rewrites me.md, and the brief
 // it writes goes on porch in the context room, where every agent can read it.
 import { config } from './config.js'
 import { log } from './log.js'
@@ -35,11 +35,11 @@ export function reflectNow({ reflect = memory.reflect, post = hub.post } = {}) {
     const before = memory.lastReflection()?.brief || ''
     const r = await reflect({ agentsDigest: await agentsDigest() })
     if (!r) return null
-    if (r.brief && hub.enabled && config.porchContextRoom && clip(r.brief, 1500) !== before) {
+    if (r.brief && hub.enabled && config.porchContextRoom && clip(r.brief, 3000) !== before) {
       await post({
         room: config.porchContextRoom,
         kind: 'briefing',
-        text: `What ${config.userName} is working on, and what each agent is doing (from ${config.assistantName}, ${new Date().toISOString().slice(0, 10)}). Read this before you start a task.\n\n${r.brief}`,
+        text: `Who ${config.userName} is, what they are working on, and what each agent is doing (from ${config.assistantName}, ${new Date().toISOString().slice(0, 10)}). Read this before you start a task.\n\n${r.brief}`,
       }).then(() => log(`shared the brief in porch room ${config.porchContextRoom}`))
         .catch(err => log(`could not share the brief: ${err.message}`))
     }
