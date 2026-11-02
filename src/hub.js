@@ -8,6 +8,7 @@ import { config } from './config.js'
 import { log } from './log.js'
 import * as agent from './agent.js'
 import * as memory from './memory.js'
+import * as directory from './agents.js'
 
 export const enabled = !!(config.porchUrl && config.porchToken)
 
@@ -31,6 +32,12 @@ export function list(query = {}) {
   const q = Object.entries(query).filter(([, v]) => v !== undefined && v !== null && v !== '')
   return call('/v1/messages?' + new URLSearchParams(q))
 }
+
+// Anton's own name on the hub.
+export const self = () => me.name
+
+// Agents on the hub, with when each was last seen.
+export const agents = () => call('/v1/agents')
 
 // Short versions of recent messages, for reading out on a call.
 export async function recent({ room, forMe, limit = 8 } = {}) {
@@ -59,12 +66,20 @@ export function relay(notice) {
   }).catch(err => log(`could not post to porch: ${err.message}`))
 }
 
+let watching = null // AbortController while the watcher runs
+
+export function stop() {
+  watching?.abort()
+  watching = null
+}
+
 async function watch() {
+  const ctl = watching = new AbortController()
   let after = readCursor()
   if (after === null) after = (await list({ limit: 1 })).at(-1)?.id || 0
-  for (;;) {
+  while (!ctl.signal.aborted) {
     try {
-      const res = await fetch(`${config.porchUrl}/v1/stream?after=${after}`, { headers: auth })
+      const res = await fetch(`${config.porchUrl}/v1/stream?after=${after}`, { headers: auth, signal: ctl.signal })
       if (!res.ok) throw new Error(`stream answered ${res.status}`)
       log('watching porch')
       const decoder = new TextDecoder()
@@ -88,16 +103,17 @@ async function watch() {
       }
       log('porch stream closed')
     } catch (err) {
+      if (ctl.signal.aborted) break
       log(`porch stream: ${err.message}`)
     }
-    await new Promise(r => setTimeout(r, 5000))
+    if (!ctl.signal.aborted) await new Promise(r => setTimeout(r, 5000))
   }
 }
 
 async function onMessage(m) {
   const forMe = m.to.includes(me.name)
-  // A reply from an agent that one of Anton's sessions stands for finishes that task.
-  if (forMe && agent.agentReply(m)) return
+  // A reply from an agent that one of Anton's sessions is waiting on finishes that task.
+  if (agent.agentReply(m, { forMe })) return
   // Messages from you that name Anton are instructions. Other agents only inform.
   if (m.from === config.porchBoss) {
     if (forMe) await command(m)
@@ -133,6 +149,7 @@ const reply = (m, text, extra = {}) =>
 
 const HELP = `Post a task for anton and Claude does it in the main session. Other things you can post:
 - "<session>: <task>" to use another session
+- "agents" to see every agent, and "<agent>: <task>" to give one a task (agents on porch get it the next time they run)
 - "sessions" or "status" to see what each session is doing
 - "new session <name> in <folder>: <purpose>" (folder is optional)
 - "link <name> to <porch agent>" for a session that talks to another agent, like a Claude Code terminal on porch
@@ -168,6 +185,10 @@ async function command(m) {
   if ((mm = /^forget\s+([\s\S]+)$/i.exec(text))) {
     r = memory.forget(mm[1])
     return reply(m, r.ok ? `Forgot:\n${r.forgot.map(f => `- ${f}`).join('\n')}` : r.reason)
+  }
+  if (/^agents\??$/i.test(text)) {
+    const all = (await directory.listAgents()).agents
+    return reply(m, all.map(a => `${a.name} (${a.kind}): ${a.state || a.latest || ''}`).join('\n'))
   }
   if (/^(status|sessions)\??$/i.test(text)) return reply(m, agent.list().map(sessionLine).join('\n'))
   let x
@@ -206,6 +227,19 @@ async function command(m) {
   }
   if (pending.length) {
     return reply(m, `Claude is waiting for a yes or no first: ${pending.map(p => `${p.session}: ${p.summary}`).join('; ')}`)
+  }
+
+  // "<agent>: task" for an agent on porch that has no session yet.
+  if ((x = /^([a-z0-9-]{1,40})\s*:\s+([\s\S]+)$/i.exec(text)) && !agent.status(x[1]).name) {
+    const other = (await directory.listAgents()).agents.find(a => a.name.toLowerCase() === x[1].toLowerCase())
+    if (other) {
+      const task = x[2]
+      r = await directory.askAgent(other.name, task, {
+        label: task,
+        onDone: (result, failed) => reply(m, failed ? `[${other.name}] ${failed}` : `[${other.name}] ${result}`, failed ? { kind: 'alert' } : {}),
+      })
+      return reply(m, r.ok ? (r.note || `On it, in ${r.session}.`) : r.reason, { kind: 'note' })
+    }
   }
 
   // "<session>: task" picks a session; anything else goes to main.
