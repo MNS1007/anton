@@ -219,7 +219,7 @@ Rules:
 - Leave out task status, commit ids and step-by-step history. A project's stage is enough.
 - Use ${u}'s name or they, never guessed pronouns. At most 1000 words.
 
-Then write a brief for ${u}'s other agents, so each one understands ${u} and knows what ${u} is doing with the others: a short "who ${u} is and how to work with them", what ${u} is focused on now, and what each agent is working on. Nothing private: no health, money, family, other people's personal details, customer names, contact details, credentials or anything said in confidence. At most 300 words.
+Then write the version of the portrait that ${u}'s other agents get, so every agent understands ${u} as well as you do and knows what ${u} is doing with the others. Same headings as the portrait. Keep everything that helps an agent work with ${u}: who they are, how they think, what they want, values, technical side, how they work, how to work with them, right now, and what each agent is doing. Leave out anything private: health, money, family, other people's personal details, customer names, contact details, credentials, and anything said in confidence. At most 800 words.
 
 Reply in exactly this form:
 ### PORTRAIT
