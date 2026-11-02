@@ -59,6 +59,7 @@ function blank(fields) {
     lastText: '',
     lastResult: fields.lastResult || '',
     pending: null, // { tool, input, summary, resolve }
+    postId: null,  // linked agents: the porch post of the task waiting for a reply
     abort: null,
     onDone: null,
   }
@@ -205,14 +206,17 @@ function sendToAgent(s, message, label, onDone) {
   s.onDone = onDone || null
   save()
   log(`[${s.name}] posted to ${s.porchAgent}: ${s.task}`)
+  s.postId = null
   Promise.resolve().then(() => agentPost({ to: [s.porchAgent], kind: 'question', text: message }))
+    .then(posted => { s.postId = posted?.id ?? null })
     .catch(err => finishAgentTask(s, '', `could not post to porch: ${err.message}`))
 }
 
-// A porch message from an agent that a session stands for. Returns true when it was one.
-export function agentReply(m) {
+// A porch message from an agent that a session stands for: addressed to Anton, or
+// a reply in the thread of the task. Returns true when it finished a task.
+export function agentReply(m, { forMe = true } = {}) {
   const s = [...sessions.values()].find(x => x.porchAgent && x.porchAgent === m.from && x.running)
-  if (!s) return false
+  if (!s || !(forMe || (s.postId && m.reply_to === s.postId))) return false
   finishAgentTask(s, String(m.text || ''), null)
   return true
 }
