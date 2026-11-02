@@ -21,7 +21,7 @@ async function porchAgents() {
 export async function listAgents() {
   const claude = agent.list().map(s => ({
     name: s.name,
-    kind: s.porchAgent ? 'claude-code terminal (through porch)' : 'claude-code session on the laptop',
+    kind: s.porchAgent ? `live Claude Code session on the laptop, reached through porch as ${s.porchAgent} (it keeps its own full context; it is not a copy)` : 'Claude Code session on the laptop, run by Anton',
     purpose: s.purpose,
     state: s.waitingForPermission ? `waiting for permission: ${s.waitingForPermission}` : s.running ? `working on "${s.task}"` : 'idle',
     lastResult: clip(s.lastResult, 300),
