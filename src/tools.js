@@ -7,6 +7,7 @@ import * as hub from './hub.js'
 import * as memory from './memory.js'
 import * as agents from './agents.js'
 import * as caller from './caller.js'
+import * as longrun from './longrun.js'
 
 const name = config.assistantName
 const user = config.userName
@@ -22,6 +23,9 @@ export const TOOLS = [
   fn('answer_permission', 'Answer a permission request. Only approve if the user clearly said yes to this exact request. Give the session when more than one is waiting.',
     { approve: { type: 'boolean' }, note: { type: 'string', description: 'Optional reason or instruction for Claude, mainly when denying' }, session }, ['approve']),
   fn('stop_task', 'Stop the task a session is working on.', { session }),
+  fn('start_long_run', `Keep a Claude session working on a goal for hours (up to 72), for example an overnight or 24-hour research run. Anton gives it the next step again and again until the time is up or it finishes, and calls ${user} once at the end. Use when ${user} asks for work that should keep going for a set time.`,
+    { session: { type: 'string' }, hours: { type: 'number' }, goal: { type: 'string', description: 'What the run is for, in full, with anything the session should read first' } }, ['session', 'hours', 'goal']),
+  fn('stop_long_run', 'Stop a long run early. The session keeps its notes.', { session }),
   fn('call_me_back', `Promise ${user} one phone call when work finishes: results are held and you call once the last of these sessions or agents is done. Use it after sending the tasks, when ${user} asks to be called back.`,
     { sessions: { type: 'array', items: { type: 'string' }, description: 'Sessions or agents to wait for. Leave out for everything working now' }, note: { type: 'string', description: 'What they are waiting for, in a few words' } }),
   fn('create_session', 'Start a new named Claude Code session for a piece of work, so tasks for it stay together. Use when the user asks for a new or separate session.',
@@ -152,7 +156,7 @@ export function callTools({ onHangup = () => {} } = {}) {
   let userTurn = 0
   let outsideTurn = 0
   // Tools that act for the user. They only run on something the user said.
-  const ACTIONS = ['ask_claude', 'ask_agent', 'call_me_back', 'answer_permission', 'hub_post', 'create_session', 'attach_session', 'link_agent_session', 'reset_session', 'remember', 'forget']
+  const ACTIONS = ['ask_claude', 'ask_agent', 'call_me_back', 'start_long_run', 'stop_long_run', 'answer_permission', 'hub_post', 'create_session', 'attach_session', 'link_agent_session', 'reset_session', 'remember', 'forget']
 
   // Follow-ups go to the session last talked about on this call.
   let lastSession = null
@@ -181,7 +185,9 @@ export function callTools({ onHangup = () => {} } = {}) {
     }
     switch (toolName) {
       case 'ask_claude': return remember(agent.ask(String(args.message || ''), { session: pick(args.session) }))
-      case 'get_status': return args.session ? agent.status(args.session) : agent.status()
+      case 'get_status': return args.session ? { ...agent.status(args.session), longRun: longrun.list().find(r => r.session === agent.status(args.session).name) || null } : { ...agent.status(), longRuns: longrun.list() }
+      case 'start_long_run': return remember(longrun.startRun({ session: pick(args.session), hours: args.hours, goal: args.goal }))
+      case 'stop_long_run': return remember(longrun.stopRun(pick(args.session)))
       case 'answer_permission': return remember(agent.answerPermission(!!args.approve, args.note, args.session))
       case 'stop_task': return remember(agent.stop(args.session || undefined))
       case 'call_me_back': {

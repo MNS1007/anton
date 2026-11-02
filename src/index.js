@@ -13,6 +13,7 @@ import { startTunnel, pointNumberAt } from './tunnel.js'
 import * as hub from './hub.js'
 import * as memory from './memory.js'
 import * as reflection from './reflect.js'
+import * as longrun from './longrun.js'
 
 const { phone } = checkConfig()
 
@@ -22,6 +23,7 @@ function notify(notice) {
   if (hub.enabled) hub.relay(notice)
 }
 agent.onNotify(notify)
+longrun.setDeps({ notify })
 agent.setContext(() => memory.context({ calls: false }))
 agent.onFinish(memory.logTask)
 
@@ -97,6 +99,7 @@ server.listen(config.port, '127.0.0.1', async () => {
     }
     if (hub.enabled) await hub.start(phone ? caller.notify : null)
     reflection.start()
+    longrun.resume()
   } catch (err) {
     log(`setup failed: ${err.message}`)
     process.exit(1)

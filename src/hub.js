@@ -10,6 +10,7 @@ import * as agent from './agent.js'
 import * as memory from './memory.js'
 import * as directory from './agents.js'
 import * as reflection from './reflect.js'
+import * as longrun from './longrun.js'
 
 export const enabled = !!(config.porchUrl && config.porchToken)
 
@@ -231,7 +232,8 @@ const HELP = `Post a task for anton and Claude does it in the main session. Othe
 - "yes" / "no" to answer a permission question (add the session name if several wait)
 - "stop <session>", "reset <session>" (fresh conversation), "remove session <name>"
 - "remember <something>", "recall <words>", "forget <description>"
-- "reflect" to have Anton fold what it learned into the shared memory now`
+- "reflect" to have Anton fold what it learned into the shared memory now
+- "run <session> for <hours> hours: <goal>" to keep a session working for hours; "stop run <session>" ends it early`
 
 async function command(m) {
   const text = m.text.trim()
@@ -260,6 +262,14 @@ async function command(m) {
   if ((mm = /^forget\s+([\s\S]+)$/i.exec(text))) {
     r = memory.forget(mm[1])
     return reply(m, r.ok ? `Forgot:\n${r.forgot.map(f => `- ${f}`).join('\n')}` : r.reason)
+  }
+  if ((mm = /^run\s+(\S+)\s+for\s+([\d.]+)\s*(?:h|hours?)\s*:\s*([\s\S]+)$/i.exec(text))) {
+    r = longrun.startRun({ session: mm[1], hours: Number(mm[2]), goal: mm[3] })
+    return reply(m, r.ok ? `${r.note} Its notes: ${r.notes}` : r.reason)
+  }
+  if ((mm = /^stop run\s+(\S+)$/i.exec(text))) {
+    r = longrun.stopRun(mm[1])
+    return reply(m, r.ok ? `Stopped the long run in ${r.session}.` : r.reason)
   }
   if (/^reflect$/i.test(text)) {
     const out = await reflection.reflectNow()
