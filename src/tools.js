@@ -28,7 +28,8 @@ export const TOOLS = [
     {
       name: { type: 'string', description: 'Short name, like resume or porch-ui' },
       purpose: { type: 'string', description: 'What it is for, in a few words' },
-      folder: { type: 'string', description: `Folder to work in: a repo name inside ${config.workDir}, or a full path. Leave out for ${config.workDir}` },
+      folder: { type: 'string', description: `Folder to work in, as the user said it: a repo or folder name (found inside or around ${config.workDir}, or in the home folder) or a full path. Leave out for ${config.workDir}` },
+      new_folder: { type: 'boolean', description: 'Only when the user asks for a new folder' },
     }, ['name', 'purpose']),
   fn('find_claude_sessions', 'List Claude Code sessions saved on the laptop, newest first, so the user can continue one of them.',
     { folder: { type: 'string', description: 'Only sessions from this folder or repo' } }),
@@ -190,7 +191,7 @@ export function callTools({ onHangup = () => {} } = {}) {
         if (unknown.length) return { ok: false, reason: `No session or agent named ${unknown.join(', ')}. Running now: ${running.join(', ') || 'nothing'}.` }
         return caller.callBackWhenDone(asked, args.note)
       }
-      case 'create_session': return remember(agent.createSession({ name: args.name, purpose: args.purpose, folder: args.folder }))
+      case 'create_session': return remember(agent.createSession({ name: args.name, purpose: args.purpose, folder: args.folder, newFolder: !!args.new_folder }))
       case 'find_claude_sessions': return { sessions: await agent.findClaudeSessions({ folder: args.folder }) }
       case 'attach_session': return remember(await agent.attachSession({ name: args.name, purpose: args.purpose, claudeSessionId: String(args.claude_session_id || '') }))
       case 'link_agent_session': return remember(agent.linkAgent({ name: args.name, agent: args.agent, purpose: args.purpose }))

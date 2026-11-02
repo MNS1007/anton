@@ -7,7 +7,8 @@
 // is the result.
 import { query, listSessions, getSessionInfo } from '@anthropic-ai/claude-agent-sdk'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs'
-import { join, resolve, relative, isAbsolute } from 'node:path'
+import { join, resolve, relative, isAbsolute, dirname, basename } from 'node:path'
+import { homedir } from 'node:os'
 import { config } from './config.js'
 import { log } from './log.js'
 
@@ -127,24 +128,36 @@ export function pendingPermissions() {
 
 export function hasPendingPermission() { return pendingPermissions().length > 0 }
 
-// A folder for a new session: a path, or a name inside WORK_DIR.
-function folderFor(dir) {
+const isDir = p => existsSync(p) && statSync(p).isDirectory()
+
+// A folder for a session, the way someone would say it: a full path, a folder
+// inside WORK_DIR, a folder WORK_DIR sits in ("my source folder" when WORK_DIR is
+// source\repos), or one in the home folder. A new folder is made (inside WORK_DIR)
+// only when create is true, so a misheard name never makes an empty folder.
+export function folderFor(dir, { create = false } = {}) {
   if (!dir) return config.workDir
-  const full = isAbsolute(dir) ? resolve(dir) : resolve(config.workDir, dir)
-  if (existsSync(full)) return statSync(full).isDirectory() ? full : null
-  // New folders are only made inside WORK_DIR.
+  const said = String(dir).trim().replace(/\s+folder$/i, '')
+  if (isAbsolute(said)) return isDir(resolve(said)) ? resolve(said) : null
+  const want = said.toLowerCase()
+  const candidates = [resolve(config.workDir, said)]
+  for (let up = config.workDir; dirname(up) !== up; up = dirname(up)) if (basename(up).toLowerCase() === want) candidates.push(up)
+  candidates.push(resolve(dirname(config.workDir), said), resolve(homedir(), said))
+  const found = candidates.find(isDir)
+  if (found) return found
+  if (!create) return null
+  const full = resolve(config.workDir, said)
   const rel = relative(config.workDir, full)
   if (rel.startsWith('..') || isAbsolute(rel)) return null
   mkdirSync(full, { recursive: true })
   return full
 }
 
-export function createSession({ name, purpose, folder }) {
+export function createSession({ name, purpose, folder, newFolder = false }) {
   const n = slug(name)
   if (!n) return { ok: false, reason: 'The session needs a name.' }
   if (sessions.has(n)) return { ok: false, reason: `There is already a session named ${n}.` }
-  const dir = folderFor(folder)
-  if (!dir) return { ok: false, reason: `Could not use the folder ${folder}. New folders have to be inside ${config.workDir}.` }
+  const dir = folderFor(folder, { create: newFolder })
+  if (!dir) return { ok: false, reason: `No folder called ${folder} near ${config.workDir}. Say the full path, or ask for a new folder (made inside ${config.workDir}).` }
   sessions.set(n, blank({ name: n, purpose, dir }))
   save()
   log(`session created: ${n} in ${dir}`)
