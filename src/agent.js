@@ -9,7 +9,7 @@ import { query, listSessions, getSessionInfo } from '@anthropic-ai/claude-agent-
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs'
 import { join, resolve, relative, isAbsolute, dirname, basename } from 'node:path'
 import { homedir } from 'node:os'
-import { config } from './config.js'
+import { config, dotenvNames } from './config.js'
 import { log } from './log.js'
 
 const hubOn = !!(config.porchUrl && config.porchToken)
@@ -41,6 +41,40 @@ let finishFn = () => {}
 export function onFinish(fn) { finishFn = fn }
 let contextFn = () => ''
 export function setContext(fn) { contextFn = fn }
+
+// Vault: extra env for a session's tasks, such as a proxy URL and a capability
+// handle as the API key (see vault.js). Kept in memory, never saved.
+let taskEnvFn = () => ({})
+export function onTaskEnv(fn) { taskEnvFn = fn }
+function taskEnv(name) {
+  try { return taskEnvFn(name) || {} } catch { return {} }
+}
+
+// What a session's Claude Code starts with: Anton's own env, minus Anton's keys
+// and tokens and anything else that looks like a secret, plus the session's
+// vault grant. So a session gets an OpenAI or Gemini key only as a vault handle,
+// and never Anton's phone, porch or webhook credentials. Claude Code's own
+// sign-in (ANTHROPIC_*, CLAUDE_*) passes, since the session cannot run without it.
+const ANTON_SECRETS = ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GEMINI_BASE_URL',
+  'PORCH_URL', 'PORCH_TOKEN', 'OPENAI_WEBHOOK_SECRET', 'MY_NUMBER', 'TWILIO_NUMBER']
+const SECRET_NAME = /^TWILIO_|(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIALS?|AUTH)$/i
+const CLAUDE_OWN = /^(ANTHROPIC_|CLAUDE_)/i
+export function childEnv(name, readOnly = false) {
+  const fromDotenv = new Set(dotenvNames.map(k => k.toUpperCase()))
+  const env = {}
+  for (const [k, v] of Object.entries(process.env)) {
+    const K = k.toUpperCase()
+    const keep = CLAUDE_OWN.test(K) || config.sessionEnvAllow.includes(K)
+    if (ANTON_SECRETS.includes(K) || (!keep && (fromDotenv.has(K) || SECRET_NAME.test(K)))) continue
+    env[k] = v
+  }
+  // Read-only tasks come from other agents, so they never get the session's grant.
+  return { ...env, ...(readOnly ? {} : taskEnv(name)), ANTON_CHILD: '1' }
+}
+
+// Sessions share Anton's porch token, so none of them may pick up a vault handle:
+// Anton's poller does that and gives each session only its own (vault.js).
+export const SESSION_DENIED = ['AskUserQuestion', 'mcp__porch__vault_status']
 
 // Sessions
 
@@ -393,12 +427,12 @@ async function run(s, message, label, onDone, readOnly = false, fresh = false) {
         permissionMode: readOnly ? 'default' : config.permissionMode,
         allowedTools: readOnly ? ['Read', 'Glob', 'Grep', ...(hubOn ? porchTools : [])] : hubOn ? [...config.allowedTools, ...porchTools] : config.allowedTools,
         mcpServers: hubOn ? { porch: { type: 'http', url: `${config.porchUrl}/mcp`, headers: { Authorization: `Bearer ${config.porchToken}` } } } : undefined,
-        disallowedTools: readOnly ? ['AskUserQuestion', ...WRITE_TOOLS] : ['AskUserQuestion'],
+        disallowedTools: readOnly ? [...SESSION_DENIED, ...WRITE_TOOLS] : SESSION_DENIED,
         appendSystemPrompt: systemNote(s),
         canUseTool: readOnly ? denyAll : canUseToolFor(s),
         abortController: s.abort,
-        // Marks Anton's own runs so the Claude Code hook does not report them twice.
-        env: { ...process.env, ANTON_CHILD: '1' },
+        // ANTON_CHILD marks Anton's own runs so the Claude Code hook does not report them twice.
+        env: childEnv(s.name, readOnly),
       },
     })
     for await (const msg of q) {

@@ -2,7 +2,10 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { homedir } from 'node:os'
 
+// The names Anton's .env adds, so Claude Code sessions never inherit them (agent.js).
+const shellNames = new Set(Object.keys(process.env))
 if (existsSync('.env')) process.loadEnvFile('.env')
+export const dotenvNames = Object.keys(process.env).filter(k => !shellNames.has(k))
 
 const env = (name, fallback) => {
   const v = process.env[name]
@@ -84,4 +87,7 @@ export const config = {
   claudeFamily: env('CLAUDE_FAMILY', 'claude-code'),
   porchCallOn: env('PORCH_CALL_ON', 'for-me,urgent').split(/[ ,]+/).filter(Boolean),
   porchCallsPerDay: Number(env('PORCH_CALLS_PER_DAY', 4)),
+  // Env names a Claude Code session may still inherit although they look like
+  // secrets, for example GH_TOKEN. Anton's own keys are never passed on.
+  sessionEnvAllow: env('SESSION_ENV_ALLOW', '').split(/[ ,;]+/).filter(Boolean).map(s => s.toUpperCase()),
 }
