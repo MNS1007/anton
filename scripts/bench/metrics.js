@@ -49,6 +49,20 @@ export function delays(userAudio, speech) {
   return out
 }
 
+// Caller lines Anton never answered: no speech between the end of the line and the
+// start of the next one (or the end of the call). Lines the caller ran straight on
+// with (said over Anton, or the next line followed within 1.5 s) are left out.
+export function unanswered(userAudio, speech, callEnd = Infinity) {
+  let n = 0
+  for (let i = 0; i < userAudio.length; i++) {
+    const u = userAudio[i], next = userAudio[i + 1]
+    const until = next ? next.start : callEnd
+    if (next && (next.overAnton || next.start - u.end < 1500)) continue
+    if (!speech.some(f => f.loud && f.at > u.end && f.at < until)) n++
+  }
+  return n
+}
+
 // Anton starting to speak while a caller line is playing (not counting the caller
 // cutting into Anton, which is the caller's choice).
 export function talkOvers(userAudio, speech) {
@@ -95,6 +109,7 @@ export function score(rec, scenario, judged = null) {
   const d = delays(rec.userAudio, rec.speech)
   return {
     dropped: outcomes.filter(o => o.outcome === 'dropped').length,
+    unanswered: unanswered(rec.userAudio, rec.speech, rec.speech.at(-1)?.at ?? Infinity),
     requests: outcomes.length,
     repeats: repeats(rec.turns).length,
     fillers: fillers(rec.turns, rec.tools).length,

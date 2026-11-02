@@ -110,20 +110,31 @@ async function until(cond, ms) { const end = Date.now() + ms; while (Date.now() 
 twilio.emit('message', JSON.stringify({ event: 'start', start: { streamSid: 'MZbench', callSid: `CAbench${seed}` } }))
 const userAudio = []
 const audio = await Promise.all(scenario.turns.map(t => say(t.text)))
+const spokeSince = at => speech.some(f => f.loud && f.at > at)
+const toolSince = at => tools.some(c => c.at > at)
+// After a line, a person waits for an answer: until Anton starts speaking (longer
+// while a tool is running, since the backend is slow), then until it has finished.
+async function awaitAnswer(after) {
+  await until(() => spokeSince(after) || (!toolSince(after) && now() - after > 15000) || now() - after > 45000, 46000)
+  if (spokeSince(after)) await until(() => quietFor(1500), 60000)
+}
 let prevAt = 0
+let prevEnd = 0
 for (const [i, t] of scenario.turns.entries()) {
-  // A line said over Anton is played at its original spacing; otherwise the caller
-  // waits until Anton has been quiet for a moment (at most 45 s), as a person would.
-  const gap = Math.min(45000, Math.max(800, t.at - prevAt - 2000))
-  if (t.overAnton) await wait(Math.min(gap, 4000))
-  else await until(() => quietFor(1500), 45000)
+  if (i > 0) {
+    // A line said over Anton is played at its original spacing, answer or not.
+    if (t.overAnton) await wait(Math.min(4000, Math.max(300, t.at - prevAt - 2000)))
+    else await awaitAnswer(prevEnd)
+  }
   prevAt = t.at
   const start = now()
   talking = []
   for (let k = 0; k < audio[i].length; k += 160) talking.push(audio[i].subarray(k, k + 160).toString('base64'))
   await until(() => !talking.length, 60000)
-  userAudio.push({ start, end: now(), text: t.text })
+  prevEnd = now()
+  userAudio.push({ start, end: prevEnd, text: t.text, overAnton: !!t.overAnton })
 }
+await awaitAnswer(prevEnd)
 await until(() => quietFor(4000), 40000)
 clearInterval(tick)
 twilio.emit('message', JSON.stringify({ event: 'stop' }))

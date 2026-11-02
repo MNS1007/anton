@@ -56,3 +56,18 @@ test('score puts it together', () => {
   assert.equal(r.dropped, 0)
   assert.equal(r.delayMedianMs, 1100)
 })
+
+test('a hand-off counts whichever tool or name it went through', () => {
+  const reqs = [{ id: 'a', tool: 'ask_claude', target: 'renfort-claude' }, { id: 'b', tool: 'ask_agent', target: 'Grok bot' }]
+  const tools = [{ at: 1, name: 'ask_agent', args: { agent: 'claude-code/renfort', message: 'x' } }, { at: 2, name: 'ask_agent', args: { agent: 'grokbot' } }]
+  assert.deepEqual(requestOutcomes(reqs, tools, []).map(o => o.outcome), ['done', 'done'])
+})
+
+test('lines Anton never answered, leaving out lines the caller ran straight on with', async () => {
+  const { unanswered } = await import('../scripts/bench/metrics.js')
+  const frames = (from, to, loud) => Array.from({ length: (to - from) / 20 }, (_, i) => ({ at: from + i * 20, loud }))
+  const speech = [...frames(0, 2000, false), ...frames(2000, 3000, true), ...frames(3000, 9000, false)]
+  const userAudio = [{ start: 0, end: 1000 }, { start: 4000, end: 5000 }, { start: 5200, end: 6000 }, { start: 8000, end: 8500, overAnton: true }]
+  // line 1 answered; line 2 followed within 1.5 s (skipped); line 3 not answered before line 4, but 4 was said over Anton (skipped); line 4 unanswered to the end
+  assert.equal(unanswered(userAudio, speech, 9000), 1)
+})

@@ -6,6 +6,7 @@ const mean = xs => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0
 const spread = xs => xs.length > 1 ? Math.max(...xs) - Math.min(...xs) : 0
 const METRICS = [
   ['dropped', 'dropped requests', 0],
+  ['unanswered', 'lines never answered', 0.5],
   ['repeats', 'repeats', 0.5],
   ['fillers', 'empty "checking"', 0.5],
   ['talkOvers', 'talking over the caller', 0.5],
@@ -30,13 +31,15 @@ export function summarize(runs) {
 export function gate(current, baseline) {
   if (!baseline) return { ship: false, reason: 'No baseline yet. Run with --baseline first.', rows: [] }
   const rows = METRICS.map(([key, label, floor]) => {
+    // A metric the baseline does not have yet is shown but cannot fail or pass the gate.
+    if (!baseline[key]) return { key, label, was: null, now: current[key].total, worse: false, better: false }
     const now = current[key].total, was = baseline[key].total
     const allow = Math.max(floor, baseline[key].noise)
     return { key, label, was, now, worse: now > was + allow, better: now < was - allow }
   })
   const dropsUp = rows.find(r => r.key === 'dropped').now > rows.find(r => r.key === 'dropped').was
   const worse = rows.filter(r => r.worse)
-  const better = rows.filter(r => r.better && ['dropped', 'repeats', 'delayMedianMs', 'delayP90Ms'].includes(r.key))
+  const better = rows.filter(r => r.better && ['dropped', 'unanswered', 'repeats', 'delayMedianMs', 'delayP90Ms'].includes(r.key))
   const ship = !dropsUp && !worse.length && better.length > 0
   const reason = dropsUp ? 'dropped requests went up'
     : worse.length ? `worse: ${worse.map(r => r.label).join(', ')}`

@@ -78,7 +78,7 @@ async function one({ s, k }) {
   if (!existsSync(out)) return null
   const rec = JSON.parse(readFileSync(out, 'utf8'))
   const sc = score(rec, s, await judge(s, rec))
-  console.log(`  ${s.id} run ${k + 1}: dropped ${sc.dropped}/${sc.requests}, repeats ${sc.repeats}, delay ${sc.delayMedianMs ?? '-'} ms, ${rec.seconds}s`)
+  console.log(`  ${s.id} run ${k + 1}: dropped ${sc.dropped}/${sc.requests}, unanswered ${sc.unanswered}, repeats ${sc.repeats}, delay ${sc.delayMedianMs ?? '-'} ms, ${rec.seconds}s`)
   return { id: s.id, run: k + 1, ...sc }
 }
 
@@ -104,7 +104,7 @@ if (flag('baseline')) {
 
 // Totals for a human, and for porch.
 const t = current
-const line = `Call bench (${scenarios.length} scenarios x ${runs} runs): ${t.dropped.total.toFixed(1)} dropped requests, ${t.repeats.total.toFixed(1)} repeats, ${t.fillers.total.toFixed(1)} empty "checking", ${t.talkOvers.total.toFixed(1)} talk-overs, ${t.wrongActions.total.toFixed(1)} wrong actions per pass.`
+const line = `Call bench (${scenarios.length} scenarios x ${runs} runs): ${t.dropped.total.toFixed(1)} dropped requests, ${t.unanswered.total.toFixed(1)} lines never answered, ${t.repeats.total.toFixed(1)} repeats, ${t.fillers.total.toFixed(1)} empty "checking", ${t.talkOvers.total.toFixed(1)} talk-overs, ${t.wrongActions.total.toFixed(1)} wrong actions per pass.`
 console.log(`\n${line}\nResults: ${runDir}`)
 writeFileSync(join(runDir, 'summary.txt'), line + '\n')
 process.exit(0)
