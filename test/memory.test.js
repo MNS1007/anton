@@ -61,6 +61,15 @@ test('forget removes matching lines from the portrait and keeps them out of late
   assert.match(prompt, /Forgotten at Sam's request[^]*interviewing at Acme Robotics/)
 })
 
+test('forgetting one fact leaves unrelated portrait lines alone', () => {
+  const portrait = '# Who Sam is\n- Evidence over claims, and they ask for the numbers before trusting a change.\n- For most of the year Sam built a voice product, and it reached pilots.\n'
+  writeFileSync(join(dir, 'me.md'), portrait)
+  memory.remember('Sam is building Anton for Android.')
+  const r = memory.forget('Anton is being built for Android')
+  assert.deepEqual(r.forgot, ['Sam is building Anton for Android.'])
+  assert.equal(readFileSync(join(dir, 'me.md'), 'utf8'), portrait)
+})
+
 test('due: something new and old enough, or a day has passed', () => {
   const since = Date.parse(memory.newSinceReflection().since || new Date().toISOString())
   assert.equal(reflection.due(since + 60e3), false, 'just reflected')

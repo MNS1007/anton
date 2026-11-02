@@ -40,7 +40,9 @@ function score(queryText, text) {
   if (!q.size) return 0
   const t = words(text)
   let hit = 0
-  for (const w of q) if (t.has(w) || [...t].some(x => x.startsWith(w) || w.startsWith(x))) hit++
+  // Prefixes count only from 4 letters, so "android" does not match "and".
+  const near = (a, b) => b.length >= 4 && a.startsWith(b)
+  for (const w of q) if (t.has(w) || [...t].some(x => near(x, w) || near(w, x))) hit++
   return hit / q.size
 }
 
@@ -64,7 +66,8 @@ export function forget(description) {
   // Matching lines of the portrait go too, right away; the next reflection is
   // told never to bring them back.
   const lines = readPortrait().split('\n')
-  const dropLines = lines.filter(l => /\w/.test(l) && !l.trim().startsWith('#') && score(description, l) >= 0.34)
+  // A portrait line holds a lot, so it goes only on a close match.
+  const dropLines = lines.filter(l => /\w/.test(l) && !l.trim().startsWith('#') && score(description, l) >= 0.75)
   if (best < 0.34 && !dropLines.length) return { ok: false, reason: 'Nothing I remember matches that.' }
   // Everything close to the best match goes, so "forget my old address" removes every version of it.
   const gone = best < 0.34 ? [] : scored.filter(x => x.s >= Math.max(0.34, best - 0.15)).map(x => x.n)
