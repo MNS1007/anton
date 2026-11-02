@@ -199,7 +199,7 @@ async function command(m) {
   }
   if (/^reflect$/i.test(text)) {
     const out = await reflection.reflectNow()
-    return reply(m, out ? `Updated. Who you are, as I see it now:\n\n${out.portrait}` : 'Nothing came out of that reflection. Try again later.')
+    return reply(m, out ? `Updated the shared memory. It now reads:\n\n${out.memory}` : 'Nothing came out of that reflection. Try again later.')
   }
   if (/^agents\??$/i.test(text)) {
     const all = (await directory.listAgents()).agents
