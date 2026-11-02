@@ -183,7 +183,9 @@ export function newSinceReflection() {
 
 // agentsDigest: what each agent is for and doing, from porch and Claude sessions.
 // Returns { portrait, brief } or null when the model gave nothing usable.
-export async function reflect({ agentsDigest = '', askFn = ask } = {}) {
+// aboutUserPosts: what other agents wrote about the user for everyone (porch's
+// context room), used like answers: second-hand, labelled by agent.
+export async function reflect({ agentsDigest = '', aboutUserPosts = '', askFn = ask } = {}) {
   const u = config.userName
   const profile = readFileSync(file('profile.md'), 'utf8').trim()
   const material = [
@@ -193,6 +195,7 @@ export async function reflect({ agentsDigest = '', askFn = ask } = {}) {
     `Call summaries:\n${clip(readLines('episodes.jsonl').slice(-20).map(e => `- ${e.ts.slice(0, 10)} ${e.summary}`).join('\n'), 6000) || '(none)'}`,
     `Tasks ${u} gave to agents:\n${clip(readLines('tasks.jsonl').slice(-30).map(t => `- ${t.ts.slice(0, 10)} [${t.session}] ${clip(t.task, 160)}: ${t.failed ? 'ended early' : 'done'}`).join('\n'), 5000) || '(none)'}`,
     `Answers agents gave to questions about ${u} (second-hand; say which agent):\n${clip(readLines('tasks.jsonl').filter(t => !t.failed && t.result && aboutUser(t.task)).slice(-6).map(t => `- from ${t.session}, ${t.ts.slice(0, 10)}:\n${clip(t.result, 3000)}`).join('\n'), 12000) || '(none)'}`,
+    `What ${u}'s other agents wrote about ${u} for all agents (second-hand; say which agent):\n${clip(aboutUserPosts, 12000) || '(none)'}`,
     `Forgotten at ${u}'s request (never write these or anything like them):\n${clip(readLines('forgotten.jsonl').map(f => `- ${f.description}`).join('\n'), 2000) || '(nothing)'}`,
     `What ${u}'s agents are doing (information about the agents only, never facts about ${u}):\n${clip(agentsDigest, 6000) || '(nothing)'}`,
   ].join('\n\n')

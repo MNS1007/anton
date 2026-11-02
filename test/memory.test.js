@@ -36,6 +36,12 @@ test('answers agents gave about the user feed the next portrait, labelled second
   assert.doesNotMatch(prompt.split('Answers agents gave')[1], /Fixed it/)
 })
 
+test('what other agents wrote about the user for everyone feeds the portrait, labelled', async () => {
+  let prompt = ''
+  await memory.reflect({ aboutUserPosts: '- from claude-ai, 2026-11-02:\nSam is learning robotics on an arm kit.', askFn: async p => { prompt = p; return answer('x', 'y') } })
+  assert.match(prompt, /wrote about Sam for all agents \(second-hand[^]*from claude-ai[^]*arm kit/)
+})
+
 test('a reply without the two sections changes nothing', async () => {
   const before = readFileSync(join(dir, 'me.md'), 'utf8')
   assert.equal(await memory.reflect({ askFn: async () => 'sorry, no' }), null)

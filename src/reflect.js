@@ -28,12 +28,20 @@ async function agentsDigest() {
   return lines.join('\n')
 }
 
+// Other agents' posts in the context room are written about the user for everyone.
+async function aboutUserPosts() {
+  if (!hub.enabled || !config.porchContextRoom) return ''
+  const posts = await hub.list({ room: config.porchContextRoom, limit: 10 }).catch(() => [])
+  return posts.filter(p => p.from !== hub.self()).slice(-3)
+    .map(p => `- from ${p.from}, ${p.ts.slice(0, 10)}:\n${clip(p.text, 6000)}`).join('\n')
+}
+
 // Reflect now. Shares the brief when it changed. Returns what was written.
 export function reflectNow({ reflect = memory.reflect, post = hub.post } = {}) {
   if (running) return running
   running = (async () => {
     const before = memory.lastReflection()?.brief || ''
-    const r = await reflect({ agentsDigest: await agentsDigest() })
+    const r = await reflect({ agentsDigest: await agentsDigest(), aboutUserPosts: await aboutUserPosts() })
     if (!r) return null
     if (r.brief && hub.enabled && config.porchContextRoom && clip(r.brief, 3000) !== before) {
       await post({
