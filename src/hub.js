@@ -104,6 +104,8 @@ async function watch() {
           if (!data) continue
           let m
           try { m = JSON.parse(data) } catch { continue }
+          // Another agent edited the shared memory: keep the local copy in step.
+          if (m.type === 'memory') { reflection.pull().catch(() => {}); continue }
           if (!m.id || m.id <= after) continue
           after = m.id
           writeCursor(after)
