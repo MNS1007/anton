@@ -4,11 +4,13 @@
 // is up or the session says the work is complete. The session keeps working notes
 // in a file it reads every round, so nothing is lost between rounds. Rounds are
 // quiet; the user hears once, when the run ends. Runs survive a restart.
+// In the worker, runs live in work.db and each round is a task whose result comes
+// back through deliver(), so an interrupted round resumes instead of being lost.
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { config } from './config.js'
 import { log } from './log.js'
-import * as agent from './agent.js'
+import { agent } from './runner.js'
 
 const DONE = 'RUN COMPLETE'
 const file = () => join(config.antonHome, 'runs.json')
@@ -16,7 +18,22 @@ const runs = new Map() // session -> { session, goal, until, rounds, notes, last
 
 // pause: the gap between rounds. Back-to-back rounds burn through a Claude plan's
 // usage limit in a few hours; a gap gives fewer, deeper rounds.
-let deps = { ask: agent.ask, notify: () => {}, now: () => Date.now(), pause: config.longRunGapMinutes * 60e3, retry: 60e3, later: (fn, ms) => setTimeout(fn, ms) }
+// store: where runs are kept (runs.json here, work.db in the worker). next: timer
+// between rounds. durable: the worker keeps the next round's time across restarts,
+// openRound(session) tells whether a round task is still on its way, and
+// dropRounds(session) cancels a round task that is queued but not started.
+const jsonStore = {
+  load() { try { return JSON.parse(readFileSync(file(), 'utf8')) } catch { return [] } },
+  save(list) {
+    mkdirSync(config.antonHome, { recursive: true })
+    writeFileSync(file(), JSON.stringify(list, null, 1))
+  },
+}
+let deps = {
+  ask: (prompt, opts) => agent.ask(prompt, opts), notify: () => {}, now: () => Date.now(), pause: config.longRunGapMinutes * 60e3, retry: 60e3,
+  later: (fn, ms) => setTimeout(fn, ms), next: (fn, ms) => setTimeout(fn, ms), store: jsonStore, durable: false, openRound: () => false,
+  dropRounds: () => {},
+}
 
 // "You've hit your 5-hour limit · resets 12:30am (America/Los_Angeles)": how long
 // to wait. A couple of minutes past the reset, or half an hour if no time is given.
@@ -34,10 +51,14 @@ export function limitWait(message, now = new Date()) {
 export function setDeps(d) { deps = { ...deps, ...d } }
 
 function save() {
-  try {
-    mkdirSync(config.antonHome, { recursive: true })
-    writeFileSync(file(), JSON.stringify([...runs.values()], null, 1))
-  } catch (err) { log(`could not save runs: ${err.message}`) }
+  try { deps.store.save([...runs.values()]) } catch (err) { log(`could not save runs: ${err.message}`) }
+}
+
+// The next round, after ms. The time is saved so a restarted worker keeps it.
+function schedule(r, ms, timer = deps.next) {
+  r.nextAt = deps.now() + ms
+  save()
+  timer(() => round(r), ms)
 }
 
 const hoursLeft = r => Math.max(0, (r.until - deps.now()) / 3600e3)
@@ -75,45 +96,59 @@ If something needs ${config.userName}'s approval (money, downloads, contacting p
 }
 
 function round(r) {
-  if (!runs.has(r.session)) return
+  // A timer set by a run that was stopped (and maybe started again) does nothing.
+  if (runs.get(r.session) !== r) return
   if (hoursLeft(r) <= 0) return finish(r, 'time is up')
   if (r.rounds >= r.maxRounds) return finish(r, `it reached ${r.maxRounds} rounds`)
+  r.nextAt = undefined
   const res = deps.ask(prompt(r), {
     session: r.session,
     label: `long run, round ${r.rounds + 1}`,
     queue: true,
     fresh: true,
-    onDone: (result, failed) => {
-      r.rounds++
-      r.last = String(result || failed || '').slice(-4000)
-      save()
-      if (failed) {
-        const why = String(failed)
-        if (why.includes('stopped')) return finish(r, 'it was stopped')
-        r.rounds-- // a failed round did no work
-        // Out of plan usage: wait for the reset, then carry on.
-        const wait = limitWait(why, new Date(deps.now()))
-        if (wait && deps.now() + wait < r.until) {
-          log(`[${r.session}] long run paused for ${Math.round(wait / 60e3)} min: ${why.slice(0, 120)}`)
-          deps.notify({ kind: 'note', ring: false, session: r.session, text: `The long run in ${r.session} hit the Claude usage limit and is paused until about ${new Date(deps.now() + wait).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. It carries on by itself after that.` })
-          return deps.later(() => round(r), wait)
-        }
-        // Anything else gets a few tries before the run gives up.
-        r.failures = (r.failures || 0) + 1
-        if (!wait && r.failures <= 3) return deps.later(() => round(r), deps.retry * r.failures)
-        return finish(r, `a round failed: ${why.slice(0, 200)}`)
-      }
-      r.failures = 0
-      if (String(result).includes(DONE) && (r.stopEarly || hoursLeft(r) <= 0.5)) return finish(r, 'the session finished the goal')
-      shareAsks(r)
-      // A round that leaves the notes untouched did no work. Count them.
-      const stamp = notesStamp(r)
-      r.idle = stamp && stamp === r.stamp ? (r.idle || 0) + 1 : 0
-      r.stamp = stamp
-      setTimeout(() => round(r), deps.pause)
-    },
+    // The worker carries this out, even after a restart; onDone is the same in-process.
+    deliver: { type: 'longrun', run: r.session, started: r.started, round: r.rounds + 1 },
+    onDone: (result, failed) => roundDone(r, result, failed),
   })
   if (!res.ok) finish(r, res.reason)
+}
+
+// A round's result. Only the round the run is waiting for counts, so a result that
+// arrives twice, or after the run was stopped, changes nothing.
+export function deliver(target, result, failed) {
+  const r = runs.get(target.run)
+  if (!r || r.started !== target.started || r.rounds + 1 !== target.round) return
+  roundDone(r, result, failed)
+}
+
+function roundDone(r, result, failed) {
+  r.rounds++
+  r.last = String(result || failed || '').slice(-4000)
+  save()
+  if (failed) {
+    const why = String(failed)
+    if (why.includes('stopped')) return finish(r, 'it was stopped')
+    r.rounds-- // a failed round did no work
+    // Out of plan usage: wait for the reset, then carry on.
+    const wait = limitWait(why, new Date(deps.now()))
+    if (wait && deps.now() + wait < r.until) {
+      log(`[${r.session}] long run paused for ${Math.round(wait / 60e3)} min: ${why.slice(0, 120)}`)
+      deps.notify({ kind: 'note', ring: false, session: r.session, text: `The long run in ${r.session} hit the Claude usage limit and is paused until about ${new Date(deps.now() + wait).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. It carries on by itself after that.` })
+      return schedule(r, wait, deps.later)
+    }
+    // Anything else gets a few tries before the run gives up.
+    r.failures = (r.failures || 0) + 1
+    if (!wait && r.failures <= 3) return schedule(r, deps.retry * r.failures, deps.later)
+    return finish(r, `a round failed: ${why.slice(0, 200)}`)
+  }
+  r.failures = 0
+  if (String(result).includes(DONE) && (r.stopEarly || hoursLeft(r) <= 0.5)) return finish(r, 'the session finished the goal')
+  shareAsks(r)
+  // A round that leaves the notes untouched did no work. Count them.
+  const stamp = notesStamp(r)
+  r.idle = stamp && stamp === r.stamp ? (r.idle || 0) + 1 : 0
+  r.stamp = stamp
+  schedule(r, deps.pause)
 }
 
 // New asks under "Waiting on <user>" in the notes reach the user without a call:
@@ -176,6 +211,7 @@ export function stopRun(session) {
   if (!r) return { ok: false, reason: `No long run in ${session}.` }
   finish(r, 'you stopped it')
   if (agent.status(r.session).running) agent.stop(r.session)
+  else deps.dropRounds(r.session)
   return { ok: true, session: r.session }
 }
 
@@ -184,13 +220,20 @@ export function list() {
 }
 
 // After a restart: pick up runs whose time is not up yet.
+// In the worker a round still on its way is left to finish (its result carries the
+// run on), and a round that was waiting for its time keeps that time.
 export function resume() {
   let saved = []
-  try { saved = JSON.parse(readFileSync(file(), 'utf8')) } catch {}
+  try { saved = deps.store.load() } catch {}
   for (const r of saved) {
     if (runs.has(r.session) || !agent.status(r.session).name) continue
     runs.set(r.session, r)
     log(`[${r.session}] long run resumed, ${hoursLeft(r).toFixed(1)} hours left`)
+    if (deps.durable && deps.openRound(r.session)) continue
+    if (deps.durable && r.nextAt > deps.now()) { deps.later(() => round(r), r.nextAt - deps.now()); continue }
     round(r)
   }
 }
+
+// Forget runs held in memory (the worker reloads them from work.db on start).
+export function clear() { runs.clear() }

@@ -139,3 +139,32 @@ test('rounds that leave the notes untouched get a push to do real work', async (
   assert.match(seen[3], /The last 2 rounds left the notes unchanged/)
   longrun.stopRun('main')
 })
+
+test('a stopped run leaves no round behind: its timer does nothing once a new run has started', async () => {
+  const timers = []
+  const seen = []
+  longrun.setDeps({
+    next: fn => timers.push(fn),
+    ask: (p, { onDone }) => { seen.push(p); setTimeout(() => onDone('step', null), 0); return { ok: true } },
+  })
+  longrun.startRun({ session: 'main', hours: 10, goal: 'the first goal' })
+  for (let i = 0; i < 50 && !timers.length; i++) await tick(5)
+  assert.equal(timers.length, 1, 'round 1 done, round 2 waits for its time')
+  longrun.stopRun('main')
+  longrun.startRun({ session: 'main', hours: 10, goal: 'the second goal' })
+  for (let i = 0; i < 50 && timers.length < 2; i++) await tick(5)
+  timers[0]() // the stopped run's timer fires
+  await tick(5)
+  assert.deepEqual(seen.map(p => /the first goal/.test(p) ? 'first' : 'second'), ['first', 'second'], 'no second round for the stopped goal')
+  longrun.stopRun('main')
+  longrun.setDeps({ next: (fn, ms) => setTimeout(fn, ms) })
+})
+
+test('stopping a run whose round has not started yet drops that round', () => {
+  const dropped = []
+  longrun.setDeps({ ask: () => ({ ok: true, queued: 1 }), dropRounds: s => dropped.push(s) })
+  longrun.startRun({ session: 'main', hours: 2, goal: 'g' })
+  assert.equal(longrun.stopRun('main').ok, true)
+  assert.deepEqual(dropped, ['main'])
+  longrun.setDeps({ dropRounds: () => {} })
+})
