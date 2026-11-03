@@ -19,7 +19,9 @@ process.env.PORCH_URL = 'http://127.0.0.1:9'
 process.env.PORCH_TOKEN = 'bench-no-hub'
 const { config } = await import('../../src/config.js')
 const caller = await import('../../src/caller.js')
-const { handleLiveCall } = await import('../../src/live.js')
+// The engine real calls use (VOICE_ENGINE), or BENCH_ENGINE=live|realtime.
+const engine = process.env.BENCH_ENGINE || config.voiceEngine
+const handle = engine === 'live' ? (await import('../../src/live.js')).handleLiveCall : (await import('../../src/bridge.js')).handleCall
 caller.setDialer(() => {})
 
 const scenario = JSON.parse(readFileSync(scenarioFile, 'utf8'))
@@ -103,11 +105,23 @@ twilio.send = raw => {
 }
 for (const u of scenario.updatesAtStart || []) caller.notify({ kind: 'note', ring: false, session: 'bench', text: u })
 const lines = []
-handleLiveCall(twilio, { makeTools, summarize: async (_, l) => { lines.push(...l) } })
+handle(twilio, { makeTools, summarize: async (_, l) => { lines.push(...l) } })
 const silence = Buffer.alloc(160, 0xff).toString('base64')
+// BENCH_NOISE=1: a phone line, not a studio. Short bursts (a breath, a rustle, a
+// click, 100 to 400 ms) every 2 to 6 seconds when the caller is quiet.
+const noisy = process.env.BENCH_NOISE === '1'
+let burst = 0
+let nextBurst = 2000
+const noiseFrame = () => Buffer.from(Array.from({ length: 160 }, () => toMulaw(Math.round((rand() * 2 - 1) * 2500)))).toString('base64')
+const quietFrame = () => {
+  if (!noisy) return silence
+  if (burst > 0) { burst--; return noiseFrame() }
+  if ((nextBurst -= 20) <= 0) { burst = 5 + Math.floor(rand() * 15); nextBurst = 2000 + rand() * 4000 }
+  return silence
+}
 let talking = []
 let ts = 0
-const tick = setInterval(() => { ts += 20; twilio.emit('message', JSON.stringify({ event: 'media', media: { timestamp: String(ts), payload: talking.shift() || silence } })) }, 20)
+const tick = setInterval(() => { ts += 20; twilio.emit('message', JSON.stringify({ event: 'media', media: { timestamp: String(ts), payload: talking.shift() || quietFrame() } })) }, 20)
 const quietFor = ms => { const tail = speech.slice(-Math.ceil(ms / 20)); return tail.length >= ms / 20 && tail.every(f => !f.loud) }
 async function until(cond, ms) { const end = Date.now() + ms; while (Date.now() < end) { if (cond()) return true; await wait(100) } return false }
 
@@ -146,5 +160,5 @@ await wait(2500)
 
 // Turn times: the transcript stamps each line when it is complete.
 const turns = lines.filter(l => l.who === 'user' || l.who === 'anton').map(l => ({ who: l.who, text: l.text, start: Date.parse(l.ts) - t0 - 2000, end: Date.parse(l.ts) - t0 }))
-writeFileSync(outFile, JSON.stringify({ scenario: scenario.id, seed, seconds: Math.round(now() / 1000), turns, tools, speech, userAudio }))
+writeFileSync(outFile, JSON.stringify({ scenario: scenario.id, seed, engine, noisy, seconds: Math.round(now() / 1000), turns, tools, speech, userAudio }))
 process.exit(0)
