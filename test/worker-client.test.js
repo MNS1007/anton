@@ -71,6 +71,25 @@ test('call_me_back holds the results and rings once, when the last one is done',
   assert.match(done[1].notice.text, /^You asked me to call when this was done \(the two tasks\)/)
 })
 
+test('call_me_back on a session that is not running is refused', async () => {
+  await idle()
+  const r = await run('call_me_back', { sessions: ['docs'] })
+  assert.equal(r.ok, false)
+  assert.match(r.reason, /nothing running/)
+})
+
+test('a callback waiting on a task that was stopped rings with the next notice, not never', async () => {
+  await run('ask_claude', { message: 'slow [id=c6] [ms=60000]', session: 'docs' })
+  await h.until(async () => { await client.refresh(); return client.status('docs').running }, { what: 'the task to start' })
+  assert.equal((await run('call_me_back', { sessions: ['docs'] })).ok, true)
+  assert.equal((await run('stop_task', { session: 'docs' })).ok, true)
+  await idle()
+  await run('ask_claude', { message: 'other [id=c7] [ms=100]', session: 'main' })
+  const n = await h.until(() => front.notices.find(x => /done c7/.test(x.notice.text)), { what: 'the next result' })
+  assert.equal(n.notice.ring, true, 'news is no longer held')
+  assert.ok(front.notices.some(x => x.notice.ring && /^You asked me to call when this was done/.test(x.notice.text)), 'the promised call rang')
+})
+
 test('long runs and stopping a task, from the call', async () => {
   const lr = await run('start_long_run', { session: 'docs', hours: 1, goal: 'keep the docs current [ms=3000]' })
   assert.equal(lr.ok, true)

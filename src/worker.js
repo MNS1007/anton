@@ -560,7 +560,18 @@ function notice(n, { key, relay = true } = {}) {
     // A promised callback (call_me_back): hold results until the last one is in.
     const cb = db.meta('callback')
     const finishes = n.kind === 'done' || n.kind === 'failed'
-    if (cb && finishes && cb.waiting.includes(n.session)) {
+    // A session with no work left (stopped, or its task ended some other way) will
+    // never send a result; waiting on it would hold every call forever.
+    const idle = cb ? cb.waiting.filter(s => s !== n.session && !busy(s)) : []
+    if (idle.length) {
+      cb.waiting = cb.waiting.filter(s => !idle.includes(s))
+      log(`call back: ${idle.join(', ')} has nothing running; not waiting on it`)
+    }
+    if (cb && !cb.waiting.length) {
+      ring = true
+      text = `You asked me to call when this was done${cb.note ? ` (${cb.note})` : ''}. ${text}`
+      db.meta('callback', null)
+    } else if (cb && finishes && cb.waiting.includes(n.session)) {
       cb.waiting = cb.waiting.filter(x => x !== n.session)
       if (cb.waiting.length) ring = false
       else text = `You asked me to call when this was done${cb.note ? ` (${cb.note})` : ''}. ${text}`
@@ -574,8 +585,8 @@ function notice(n, { key, relay = true } = {}) {
 }
 
 function callBackWhenDone(sessions, note = '') {
-  const waiting = [...new Set(sessions || [])]
-  if (!waiting.length) return { ok: false, reason: 'Nothing is running, so there is nothing to wait for.' }
+  const waiting = [...new Set(sessions || [])].filter(busy)
+  if (!waiting.length) return { ok: false, reason: `${(sessions || []).join(', ') || 'Nothing'} has nothing running, so there is nothing to wait for. Its last result is in get_status.` }
   db.meta('callback', { waiting, note: note || '' })
   log(`will call back when ${waiting.join(', ')} finish`)
   return { ok: true, waiting, note: `I will call when ${waiting.join(', ')} ${waiting.length > 1 ? 'have all' : 'has'} finished.` }
@@ -664,6 +675,10 @@ function recover() {
     })
     log(`[${t.session}] task ${t.id} will resume (attempt ${attempts})`)
   }
+}
+
+function busy(session) {
+  return !!db.get("SELECT 1 FROM tasks WHERE session = ? AND status IN ('queued', 'running', 'interrupted') LIMIT 1", session)
 }
 
 function hasOpenRound(session) {
