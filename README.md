@@ -214,6 +214,8 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `PORCH_ROOM` | empty | Where Anton posts Claude's updates and questions. Empty means your DM with Anton |
 | `PORCH_CALL_ON` | `for-me,urgent` | Which posts from other agents make Anton call: `for-me` (addressed to Anton), `urgent` (marked high or alert), `questions`, `all` or `none` |
 | `PORCH_CALLS_PER_DAY` | `4` | Most calls a day caused by porch posts. Past that, updates wait for your next call. 0 means no limit |
+| `WORKER` | `off` | `on` runs Claude in the worker, so tasks survive a restart. See [Worker](#worker) |
+| `WORKER_PORT` | `8788` | Local port of the worker's API |
 
 Claude also uses your normal Claude Code settings, CLAUDE.md files and allow rules.
 
@@ -242,6 +244,24 @@ curl -X POST http://127.0.0.1:8787/notify -d '{"message":"The nightly build fail
 ```
 
 This only works from the laptop itself.
+
+## Worker
+
+Normally Claude runs inside Anton's own process, so restarting Anton stops every task in flight, long-run rounds included. The worker fixes that. It is a second process (`src/worker.js`) that runs all the Claude work: sessions, the task queue, long runs, the porch watcher, reflection, the liaison and the vault handles. Anton keeps the phone side and talks to the worker on `127.0.0.1:WORKER_PORT` (default 8788), with a secret kept in `ANTON_HOME/worker.secret`. Everything the worker does is saved in `ANTON_HOME/work.db`.
+
+Turn it on with `WORKER=on` in `.env` (off by default for now; it needs Node.js 22.13 or newer). `npm start` then starts the worker if it is not running, checks it every 15 seconds and starts it again if it died. You can also run it on its own with `npm run worker`. The first start copies `sessions.json` and `runs.json` into `work.db` and leaves the files as backups.
+
+How restarts behave:
+
+- **Anton restarts or crashes:** the worker keeps working. Calls in progress end. Updates for you wait in the worker and reach you when Anton is back; updates Anton already had but you have not heard yet are kept in `ANTON_HOME/unheard.json` and read back when it starts.
+- **The worker crashes, or the laptop sleeps or reboots:** each task that was running continues its own Claude conversation when the worker starts again ("your previous turn was interrupted, continue"). A task gets 3 tries like that, then it fails and you hear about it.
+- **Stopping on purpose** (Ctrl+C in its window): running tasks are saved at a checkpoint and continue on the next start.
+- **Results are never lost or sent twice:** a porch reply cut off by a crash is checked on porch before it is posted again, and each update reaches the phone once. A porch message that was being handled when the worker died is handled again, but gives the same reply and does nothing twice: a "yes" only ever answers the question that was waiting when you sent it.
+- **A pending permission question** survives a restart. The resumed task asks again and waits on the same question; an answer you gave that the task had not taken yet is used. An answer the task already took is not used a second time (the command may have run already), so you are asked again.
+- **Long runs** are rounds of tasks in the worker, so a round cut off by a crash resumes, and the next round starts only after its result is saved.
+- **Two workers** cannot run at once; the second one leaves. `work.db` is copied to `ANTON_HOME/backups` once a day (the last 7 are kept). If `work.db` is ever damaged, the worker sets it aside as `work.db.corrupt-<time>`, starts from the newest copy (or empty, if there is none) and tells you. `sessions.json` and `runs.json` are never imported a second time.
+
+`npm run worker-check` prints the worker's numbers and fails if anything was lost or delivered twice: tasks and rounds started, done, failed, interrupted and resumed; lost (interrupted and never resumed or finished, must be 0); duplicates (must be 0); how long resumes took; and how long updates have waited for Anton.
 
 ## Voice engines
 
