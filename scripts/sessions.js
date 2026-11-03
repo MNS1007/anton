@@ -50,7 +50,7 @@ const state = name => {
 const latestId = s => tasks.find(t => t.session === s.name && t.claude_session_id)?.claude_session_id || s.claude_session_id
 // The conversation itself lives in Claude Code's folder, not Anton's. After a
 // restore from an older backup the id can be known here but its file gone.
-const claudeDir = resolve((process.env.CLAUDE_CONFIG_DIR || '~/.claude').replace(/^~(?=$|[\/])/, homedir()))
+const claudeDir = resolve((process.env.CLAUDE_CONFIG_DIR || '~/.claude').replace(/^~(?=$|[\\/])/, homedir()))
 const saved = (dir, id) => existsSync(join(claudeDir, 'projects', String(dir).replace(/[^a-zA-Z0-9]/g, '-'), id + '.jsonl'))
 const shown = (dir, id) => id ? (saved(dir, id) ? id : id + ' (conversation file missing)') : null
 const find = name => {
@@ -86,7 +86,7 @@ function open(s, taskId) {
   if (taskId && !t) return fail(`${s.name} has no task ${taskId}. See: anton-sessions ${s.name}`)
   const id = t ? t.claude_session_id : latestId(s)
   if (!id) return fail(`${s.name} has no conversation yet.`)
-  if (!saved(s.dir, id)) return fail(`${id} is not in Claude Code's folder (${claudeDir}\projects), for example after restoring an older backup. Pick an older one: anton-sessions ${s.name}`)
+  if (!saved(s.dir, id)) return fail(`${id} is not in Claude Code's folder (${join(claudeDir, 'projects')}), for example after restoring an older backup. Pick an older one: anton-sessions ${s.name}`)
   const busy = (t ? t.status === 'running' : state(s.name) === 'working')
   const argv = ['--resume', id, ...(busy ? ['--fork-session'] : [])]
   console.log(busy
