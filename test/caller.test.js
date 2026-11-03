@@ -53,3 +53,24 @@ test('a newer note from the same session replaces the older one in the queue', (
   const heard = pickUp()
   assert.deepEqual(heard, ['waiting on you, version 4', 'main finished'])
 })
+
+test('with keepIn, updates not heard yet survive a restart of the front', async () => {
+  const { join } = await import('node:path')
+  const file = join(process.env.ANTON_HOME, 'unheard-test.json')
+  // Each import with a new query is a fresh copy of caller.js: a restarted front.
+  const fresh = async n => { const c = await import(`../src/caller.js?front=${n}`); let rang = 0; c.setDialer(() => { rang++ }); c.keepIn(file); return { c, rang: () => rang } }
+  const first = await fresh(1)
+  first.c.notify({ kind: 'note', ring: false, session: 'lr', text: 'the long run is waiting on you' })
+  first.c.notify({ kind: 'done', session: 'main', text: 'main finished' })
+  assert.equal(first.rang(), 1)
+  // The call connects but the user never speaks, then the front is restarted.
+  first.c.callStarted({ inject() {} })
+  const second = await fresh(2)
+  assert.deepEqual(second.c.heldUpdates(), ['the long run is waiting on you', 'main finished'])
+  assert.equal(second.rang(), 1, 'it rings again for the update that wanted a call')
+  const heard = second.c.callStarted({ inject() {} })
+  second.c.callEnded({ userSpoke: true, updates: heard })
+  const third = await fresh(3)
+  assert.deepEqual(third.c.heldUpdates(), [], 'heard updates are not kept')
+  assert.equal(third.rang(), 0)
+})

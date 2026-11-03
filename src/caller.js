@@ -1,9 +1,10 @@
 // Holds updates for the user and makes sure they hear them:
 // tell them on the live call, or call them, and call again until they pick up.
+import { readFileSync, writeFileSync } from 'node:fs'
 import twilio from 'twilio'
 import { config } from './config.js'
 import { log } from './log.js'
-import * as agent from './agent.js'
+import { agent } from './runner.js'
 
 let twilioClient = null
 const client = () => (twilioClient ??= twilio(config.twilioSid, config.twilioToken))
@@ -14,6 +15,32 @@ let active = null       // live call bridge: { inject(text), callSid }
 let outbound = null     // { sid, connected }
 let retryTimer = null
 let attempts = 0
+
+// With the worker, a notice the front has taken is gone from the worker's outbox,
+// so updates not heard yet are also kept in a file (keepIn) and read back when
+// the front starts again. Off (null) without the worker. Call it once calls can
+// be placed (the public url is known): updates that wanted a call get one.
+let store = null
+let telling = []      // told on the current call; heard once the user speaks
+let wantCall = false  // an update asked for a call that has not been heard yet
+
+export function keepIn(file) {
+  store = file
+  let saved = null
+  try { saved = JSON.parse(readFileSync(file, 'utf8')) } catch {}
+  const earlier = Array.isArray(saved?.updates) ? saved.updates : []
+  queue = [...earlier, ...queue]
+  if (earlier.length) log(`${earlier.length} update(s) from before the restart are waiting to be heard`)
+  if (saved?.ring && earlier.length) wantCall = true
+  save()
+  if (wantCall && queue.length && !active && !outbound && !retryTimer) dial()
+}
+
+function save() {
+  if (!store) return
+  const updates = [...telling, ...queue]
+  try { writeFileSync(store, JSON.stringify({ updates, ring: wantCall && updates.length > 0 })) } catch (err) { log(`could not keep the updates: ${err.message}`) }
+}
 
 // A promised callback: the sessions the user is waiting on. Their results are
 // held, and one call goes out when the last of them finishes.
@@ -43,7 +70,7 @@ export function notify(notice) {
     if (callback && finishes(notice)) callback.waiting.delete(notice.session)
     if (callback && !callback.waiting.size) callback = null
     active.inject(notice.text)
-    return
+    return save()
   }
   // A newer note from the same session replaces the older one, so a call does not
   // open with four versions of the same update.
@@ -67,6 +94,8 @@ export function notify(notice) {
     // Other news waits for the promised call, unless it needs the user's answer.
     ring = false
   }
+  if (ring) wantCall = true
+  save()
   if (ring && !outbound && !retryTimer) dial()
 }
 
@@ -78,6 +107,8 @@ export function callStarted(bridge) {
   retryTimer = null
   const updates = queue
   queue = []
+  telling = updates
+  save()
   return updates
 }
 
@@ -85,12 +116,15 @@ export function callStarted(bridge) {
 export function callEnded({ userSpoke, updates }) {
   active = null
   if (outbound) outbound = null
+  telling = []
   if (!userSpoke) {
     queue = [...updates, ...queue]
     log('call ended with no answer from the user')
   } else {
     attempts = 0
+    if (!queue.length) wantCall = false
   }
+  save()
   if (queue.length || agent.hasPendingPermission()) {
     if (userSpoke && agent.hasPendingPermission() && !queue.length) {
       const waits = agent.pendingPermissions().map(p => `${p.session}: ${p.summary}`).join('; ')
