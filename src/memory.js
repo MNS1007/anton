@@ -7,10 +7,10 @@
 //   forgotten.jsonl  what you asked it to forget, so it is not learned again
 //   me.md            the shared memory about you (who you are, how you think, what you want), kept in step with porch
 //   reflections.jsonl when it was rewritten
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { query } from '@anthropic-ai/claude-agent-sdk'
+import { query } from './sdk.js'
 import { config } from './config.js'
 import { log } from './log.js'
 
@@ -33,6 +33,27 @@ function readLines(name) {
 const append = (name, obj) => appendFileSync(file(name), JSON.stringify(obj) + '\n')
 const now = () => new Date().toISOString()
 
+// With the worker, the front and the worker both change these files. A change that
+// reads a file and then adds to it or rewrites it holds a lock (a folder, which only
+// one process can make), so neither loses what the other just wrote. A lock left by
+// a process that died holding it is taken over after 10 s; after 5 s of waiting the
+// change goes ahead anyway rather than hang.
+const lockDir = () => file('.lock')
+const pause = new Int32Array(new SharedArrayBuffer(4))
+function locked(fn) {
+  const end = Date.now() + 5000
+  let got = false
+  while (!got) {
+    try { mkdirSync(lockDir()); got = true } catch (err) {
+      if (err.code !== 'EEXIST') break
+      try { if (Date.now() - statSync(lockDir()).mtimeMs > 10000) { rmSync(lockDir(), { recursive: true, force: true }); continue } } catch {}
+      if (Date.now() > end) break
+      Atomics.wait(pause, 0, 0, 10)
+    }
+  }
+  try { return fn() } finally { if (got) rmSync(lockDir(), { recursive: true, force: true }) }
+}
+
 // Word overlap is enough for a personal memory of a few hundred lines.
 const words = s => new Set(String(s).toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || [])
 function score(queryText, text) {
@@ -52,6 +73,10 @@ function score(queryText, text) {
 export function remember(text, source = 'you', { loose = false } = {}) {
   text = String(text || '').trim().slice(0, 500)
   if (!text) return { ok: false, reason: 'Nothing to remember.' }
+  return locked(() => addNote(text, source, loose))
+}
+
+function addNote(text, source, loose) {
   const notes = readLines('notes.jsonl')
   if (notes.some(n => n.text.toLowerCase() === text.toLowerCase() || (loose && score(text, n.text) >= 0.6))) return { ok: true, note: 'Already remembered.' }
   append('notes.jsonl', { id: randomBytes(4).toString('hex'), ts: now(), source, text })
@@ -60,6 +85,10 @@ export function remember(text, source = 'you', { loose = false } = {}) {
 }
 
 export function forget(description) {
+  return locked(() => forgetNow(description))
+}
+
+function forgetNow(description) {
   const notes = readLines('notes.jsonl')
   const scored = notes.map(n => ({ n, s: score(description, n.text) }))
   const best = Math.max(0, ...scored.map(x => x.s))
@@ -174,7 +203,7 @@ const readPortrait = () => { try { return readFileSync(file('me.md'), 'utf8').tr
 
 // The shared copy changed on porch: keep the local one the same.
 export function setPortrait(text) {
-  writeFileSync(file('me.md'), String(text || '').trim() + '\n')
+  locked(() => writeFileSync(file('me.md'), String(text || '').trim() + '\n'))
 }
 
 export const lastReflection = () => readLines('reflections.jsonl').at(-1) || null

@@ -105,3 +105,28 @@ test('pull keeps the local copy in step with porch', async () => {
   await reflection.pull({ getMemory: async () => ({ text: '# Who Sam is\n- Edited on porch by another agent.', version: 7 }) })
   assert.match(read(), /Edited on porch/)
 })
+
+test('a note added while another process rewrites the notes is not lost', async () => {
+  const { spawn } = await import('node:child_process')
+  const { existsSync } = await import('node:fs')
+  memory.remember('Sam likes short updates.')
+  // Another process (the front, or the worker) rewriting notes.jsonl, as forget does:
+  // it holds the lock while it reads, thinks, and writes back.
+  const code = `
+    const { mkdirSync, readFileSync, rmSync, writeFileSync } = await import('node:fs')
+    const dir = process.argv[1]
+    mkdirSync(dir + '/.lock')
+    const notes = readFileSync(dir + '/notes.jsonl', 'utf8')
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 600)
+    writeFileSync(dir + '/notes.jsonl', notes)
+    rmSync(dir + '/.lock', { recursive: true })`
+  const other = spawn(process.execPath, ['--input-type=module', '-e', code, dir])
+  const exited = new Promise(r => other.on('exit', r))
+  for (let i = 0; i < 200 && !existsSync(join(dir, '.lock')); i++) await new Promise(r => setTimeout(r, 5))
+  assert.ok(existsSync(join(dir, '.lock')), 'the other process holds the lock')
+  memory.remember('Sam is flying to Lisbon on Friday.')
+  await exited
+  const notes = readFileSync(join(dir, 'notes.jsonl'), 'utf8')
+  assert.match(notes, /flying to Lisbon/, 'the new note survived the rewrite')
+  assert.match(notes, /short updates/)
+})
