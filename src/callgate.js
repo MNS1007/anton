@@ -3,11 +3,13 @@
 // this by 5 pm" from "FYI, informational, no need to call": both are addressed to
 // Anton. So a small model reads the post with the recent porch thread and the
 // owner's notes and picks one of:
-//   call: the owner needs to act or decide soon, and it can't wait for the next call
-//   hold: worth telling them, but on the next call or in porch, without ringing
-//   skip: already resolved, already known, or noise
-// When the model can't decide, the answer is hold: a missed call costs little,
-// an unwanted one costs the owner's attention.
+//   call: work the owner is waiting on is done or has a result, an agent is blocked
+//         or needs them, something is at risk, or they asked to hear about it
+//   hold: progress with nothing finished, news, or posts they said not to call about
+//   skip: thanks, chatter, repeats, or questions agents can settle without them
+// The owner is not watching the agents, so a finished result is worth a call:
+// without one they can't tell done from stuck. When the model can't decide, the
+// answer is hold.
 import { query } from './sdk.js'
 import { config } from './config.js'
 import { log } from './log.js'
@@ -18,12 +20,18 @@ export function gatePrompt({ m, recent = [], notes = '' }) {
   const u = config.userName
   return `You decide whether ${config.assistantName}, ${u}'s phone assistant, should phone ${u} now about a post from one of ${u}'s other agents.
 
-Answer "call" only if ${u} needs to act, decide or know something soon and it cannot wait until the next call: a deadline today, a decision only ${u} can make that is blocking work, money or access at risk, or something ${u} asked to be called about.
-Answer "hold" if it is worth telling ${u} but can wait: status updates, results, news, plans, FYIs.
-Answer "skip" if it is already resolved, repeats something already said, or is just thanks or chatter.
-Respect what the post or the recent thread says about calling: if ${u} or an agent passing on ${u}'s wishes says not to call about this kind of post, do not call. A post saying something is urgent is a reason to consider calling, not a rule.
+${u} is not watching the agents; ${config.assistantName}'s calls are how ${u} knows what is going on. Without a call, ${u} cannot tell finished work from stuck work, so finished work is a call even when nothing needs deciding.
 
-${notes ? `What ${config.assistantName} knows about ${u}'s preferences:\n${clip(notes, 2500)}\n\n` : ''}Recent porch posts around it, oldest first:
+Answer "call" when:
+- work an agent was doing for ${u} is finished, or has a result, so ${u} can say what is next
+- an agent is blocked, failed, or needs ${u}'s decision, approval or answer
+- a deadline, money, or access is at risk
+- it is something ${u} asked to hear about or be called back about (see the recent calls)
+Answer "hold" when it is worth telling ${u} but not worth a call on its own: progress on work that is still going with nothing finished, news, plans, or a kind of post ${u} said not to be called about.
+Answer "skip" when ${u} has nothing to learn from it: thanks, chatter, a repeat of something already said, something already resolved, or agents asking each other or ${config.assistantName} questions they can settle without ${u}.
+Respect what the post or the recent thread says about calling: if ${u} or an agent passing on ${u}'s wishes says not to call about this kind of post, do not call. A post saying something is urgent is a reason to consider calling, not a rule. A wish about one kind of post (for example job or event status) covers only that kind; it does not stop calls about finished work.
+
+${notes ? `What ${config.assistantName} knows about ${u}, their preferences and recent calls:\n${clip(notes, 14000)}\n\n` : ''}Recent porch posts around it, oldest first:
 ${recent.length ? recent.map(r => `- ${r.from} (${r.kind || 'note'}${r.priority === 'high' ? ', high' : ''}): ${clip(r.text, 300)}`).join('\n') : '(none)'}
 
 The post:

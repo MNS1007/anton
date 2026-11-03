@@ -247,7 +247,7 @@ async function judgeCall(m) {
   ])
   const seen = new Set()
   const recent = around.flat().filter(r => r.id !== m.id && !seen.has(r.id) && seen.add(r.id)).sort((a, b) => a.id - b.id).slice(-12)
-  return judge({ m, recent, notes: memory.context({ calls: false }) })
+  return judge({ m, recent, notes: memory.context() })
 }
 
 function worthACall(m, forMe) {
