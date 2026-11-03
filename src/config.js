@@ -48,6 +48,16 @@ export const config = {
   realtimeModel: env('REALTIME_MODEL', 'gpt-realtime-2.1'),
   voice: env('VOICE', 'cedar'),
   transcribeModel: env('TRANSCRIBE_MODEL', 'gpt-4o-mini-transcribe'),
+  // Pinning the language stops short sounds being heard as Swedish or German.
+  transcribeLanguage: env('TRANSCRIBE_LANGUAGE', 'en'),
+  // near_field (phone at the ear), far_field (speakerphone) or off.
+  noiseReduction: env('NOISE_REDUCTION', 'near_field'),
+  vadEagerness: env('VAD_EAGERNESS', 'low'),
+  // Talking over Anton cuts it off only after this much steady speech, so "yeah",
+  // a cough or line noise do not.
+  bargeInMs: Number(env('BARGE_IN_MS', 700)),
+  // anton: Anton decides when to answer and when to stop (src/bridge.js). server: the old way.
+  turnMode: env('TURN_MODE', 'anton'),
   // realtime: gpt-realtime over the Twilio media stream (default).
   // live: GPT-Live, OpenAI's full-duplex model, over the same media stream.
   // Calls that reach OpenAI over SIP always use GPT-Live (see src/sip.js).
