@@ -245,6 +245,14 @@ curl -X POST http://127.0.0.1:8787/notify -d '{"message":"The nightly build fail
 
 This only works from the laptop itself.
 
+## Seeing and opening Anton's sessions
+
+Claude Code leaves sessions made through the Agent SDK out of `claude --resume` and `claude --continue` on purpose, and there is no setting to change that; only `claude --resume <id>` opens one. Anton's sessions are made that way, and a long run starts a fresh conversation every round. So Anton has its own list. Run `npm link` once in this folder, then from anywhere:
+
+- `anton-sessions`: every session, whether it is working, its long run (round and hours left), and its latest conversation id.
+- `anton-sessions <name>`: that session's conversations, newest first (kept since the worker took over).
+- `anton-resume <name> [task]`: opens the latest conversation (or that task's) in Claude Code, in the session's folder. If Anton is using it right now, it opens a copy (`--fork-session`) so you never write into a conversation Anton is in the middle of.
+
 ## Worker
 
 Normally Claude runs inside Anton's own process, so restarting Anton stops every task in flight, long-run rounds included. The worker fixes that. It is a second process (`src/worker.js`) that runs all the Claude work: sessions, the task queue, long runs, the porch watcher, reflection, the liaison and the vault handles. Anton keeps the phone side and talks to the worker on `127.0.0.1:WORKER_PORT` (default 8788), with a secret kept in `ANTON_HOME/worker.secret`. Everything the worker does is saved in `ANTON_HOME/work.db`.

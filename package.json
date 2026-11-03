@@ -12,7 +12,8 @@
     "check-live": "node scripts/live-call-check.js",
     "bench-calls": "node scripts/bench/run.js",
     "bench-scenarios": "node scripts/bench/make.js",
-    "check-call-gate": "node scripts/check-call-gate.js"
+    "check-call-gate": "node scripts/check-call-gate.js",
+    "sessions": "node scripts/sessions.js"
   },
   "license": "MIT",
   "type": "module",
@@ -23,5 +24,9 @@
   },
   "engines": {
     "node": ">=20.12"
+  },
+  "bin": {
+    "anton-sessions": "scripts/sessions.js",
+    "anton-resume": "scripts/resume.js"
   }
 }
