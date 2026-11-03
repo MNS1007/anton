@@ -6,7 +6,7 @@
 // Handles are never written to disk, logged, posted or put in a notice.
 import { config } from './config.js'
 import { log } from './log.js'
-import * as agent from './agent.js'
+import { agent } from './runner.js'
 
 const pending = new Map() // request id -> session name, until it is decided
 const done = new Set()    // request ids already settled, so they are not fetched again

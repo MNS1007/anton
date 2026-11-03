@@ -5,7 +5,7 @@
 // A session can also stand for another agent on porch (for example a Claude Code
 // session open in a terminal): its tasks are posted to that agent and its reply
 // is the result.
-import { query, listSessions, getSessionInfo } from '@anthropic-ai/claude-agent-sdk'
+import { query, listSessions, getSessionInfo } from './sdk.js'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs'
 import { join, resolve, relative, isAbsolute, dirname, basename } from 'node:path'
 import { homedir } from 'node:os'
@@ -15,11 +15,11 @@ import { log } from './log.js'
 const hubOn = !!(config.porchUrl && config.porchToken)
 
 // Claude can read the porch hub without asking; posting still asks.
-const porchTools = ['read_messages', 'search_messages', 'list_rooms', 'list_agents'].map(t => `mcp__porch__${t}`)
+export const porchTools = ['read_messages', 'search_messages', 'list_rooms', 'list_agents'].map(t => `mcp__porch__${t}`)
 
 const registryFile = join(config.antonHome, 'sessions.json')
 
-function systemNote(s) {
+export function systemNote(s) {
   return `You are being driven by voice or by short messages. The user is away from the laptop and talks to you through an assistant named ${config.assistantName}, who relays your replies.
 - Keep your final reply short and speakable: what you did, what you found, what you need. No tables, no long code, no file dumps.
 - If you need the user to decide something, end your turn with one clear question.
@@ -124,7 +124,7 @@ function save() {
 
 load()
 
-const slug = name => String(name || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
+export const slug = name => String(name || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
 
 function find(name) {
   if (!name) return null
@@ -319,10 +319,13 @@ export function removeSession(name) {
 const runningCount = () => [...sessions.values()].filter(s => s.running && !s.porchAgent).length
 
 // session: which one (default main). queue: wait instead of refusing when busy.
-// onDone(result, failed) receives the outcome instead of the phone.
+// deliver: what to do with the outcome instead of telling the phone, as plain JSON
+// (see deliver.js), so the worker can carry it out after a restart too.
+// onDone(result, failed) is the in-process form of the same thing.
 // readOnly: the task comes from another agent, not the user. The session can read
 // and answer but cannot change files or run anything, and asks the user nothing.
-export function ask(message, { session = 'main', label, queue = false, onDone, readOnly = false, fresh = false } = {}) {
+export function ask(message, { session = 'main', label, queue = false, onDone, deliver, readOnly = false, fresh = false } = {}) {
+  if (!onDone && deliver) onDone = (result, failed) => carry(deliver, result, failed)
   const s = find(session)
   if (!s) return { ok: false, reason: `No session named ${session}. Create it first.` }
   // The other agent keeps its own queue, so follow-ups go straight through.
@@ -399,9 +402,30 @@ function canUseToolFor(s) {
 }
 
 // What a read-only task may never use, whatever the user's allow rules say.
-const WRITE_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'PowerShell', 'KillShell', 'Task', 'Agent',
+export const WRITE_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'PowerShell', 'KillShell', 'Task', 'Agent',
   'mcp__porch__post_message', 'mcp__porch__send_dm', 'mcp__porch__update_memory_section', 'mcp__porch__replace_memory']
 const denyAll = async () => ({ behavior: 'deny', message: 'This request came from another agent, so this session is read-only. Say what you would do and that the user has to approve it.' })
+
+// What a Claude task starts with. Shared with the worker, which runs the same tasks.
+// s: { name, purpose, dir }. resume: the Claude session to continue. fork: continue
+// a copy of it. canUseTool asks the user; read-only tasks never ask.
+export function taskOptions(s, { readOnly = false, resume, fork = false, canUseTool, abortController }) {
+  return {
+    cwd: s.dir,
+    additionalDirectories: config.extraDirs,
+    resume: resume || undefined,
+    forkSession: !!fork,
+    permissionMode: readOnly ? 'default' : config.permissionMode,
+    allowedTools: readOnly ? ['Read', 'Glob', 'Grep', ...(hubOn ? porchTools : [])] : hubOn ? [...config.allowedTools, ...porchTools] : config.allowedTools,
+    mcpServers: hubOn ? { porch: { type: 'http', url: `${config.porchUrl}/mcp`, headers: { Authorization: `Bearer ${config.porchToken}` } } } : undefined,
+    disallowedTools: readOnly ? [...SESSION_DENIED, ...WRITE_TOOLS] : SESSION_DENIED,
+    appendSystemPrompt: systemNote(s),
+    canUseTool: readOnly ? denyAll : canUseTool,
+    abortController,
+    // ANTON_CHILD marks Anton's own runs so the Claude Code hook does not report them twice.
+    env: childEnv(s.name, readOnly),
+  }
+}
 
 async function run(s, message, label, onDone, readOnly = false, fresh = false) {
   s.running = true
@@ -419,21 +443,13 @@ async function run(s, message, label, onDone, readOnly = false, fresh = false) {
   try {
     const q = query({
       prompt: message,
-      options: {
-        cwd: s.dir,
-        additionalDirectories: config.extraDirs,
+      options: taskOptions(s, {
+        readOnly,
         resume: fresh ? undefined : s.claudeSessionId || s.forkFrom || undefined,
-        forkSession: !fresh && !s.claudeSessionId && !!s.forkFrom,
-        permissionMode: readOnly ? 'default' : config.permissionMode,
-        allowedTools: readOnly ? ['Read', 'Glob', 'Grep', ...(hubOn ? porchTools : [])] : hubOn ? [...config.allowedTools, ...porchTools] : config.allowedTools,
-        mcpServers: hubOn ? { porch: { type: 'http', url: `${config.porchUrl}/mcp`, headers: { Authorization: `Bearer ${config.porchToken}` } } } : undefined,
-        disallowedTools: readOnly ? [...SESSION_DENIED, ...WRITE_TOOLS] : SESSION_DENIED,
-        appendSystemPrompt: systemNote(s),
-        canUseTool: readOnly ? denyAll : canUseToolFor(s),
+        fork: !fresh && !s.claudeSessionId && !!s.forkFrom,
+        canUseTool: canUseToolFor(s),
         abortController: s.abort,
-        // ANTON_CHILD marks Anton's own runs so the Claude Code hook does not report them twice.
-        env: childEnv(s.name, readOnly),
-      },
+      }),
     })
     for await (const msg of q) {
       if (msg.session_id && msg.session_id !== s.claudeSessionId) {
@@ -474,18 +490,24 @@ async function run(s, message, label, onDone, readOnly = false, fresh = false) {
   pump()
 }
 
+// Runs a deliver target here, in this process. Loaded late: deliver.js reaches
+// hub.js and longrun.js, which load this module.
+function carry(target, result, failed) {
+  return import('./deliver.js').then(d => d.run(target, result, failed))
+}
+
 function report(done, result, failed) {
   Promise.resolve().then(() => done(result, failed)).catch(err => log(`could not report result: ${err.message}`))
 }
 
-function describe(tool, input) {
+export function describe(tool, input) {
   if (input.command) return `run the command: ${clip(String(input.command), 300)}`
   if (input.file_path) return `use ${tool} on ${input.file_path}`
   if (input.url) return `use ${tool} on ${input.url}`
   return `use ${tool} with ${clip(JSON.stringify(input), 300)}`
 }
 
-function clip(s, n) {
+export function clip(s, n) {
   s = String(s || '')
   return s.length > n ? s.slice(0, n) + '...' : s
 }

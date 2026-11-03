@@ -1,12 +1,14 @@
 // Connects Anton to a porch hub (github.com/MNS1007/porch).
 // It watches the hub, takes tasks you send it there, posts Claude's results,
 // and phones you when another agent posts something that matters.
+// What happens to a task's result is a deliver target (plain JSON, see deliver()),
+// so the worker can still post it after a restart.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { config } from './config.js'
 import { log } from './log.js'
-import * as agent from './agent.js'
+import { agent } from './runner.js'
 import * as memory from './memory.js'
 import * as directory from './agents.js'
 import * as reflection from './reflect.js'
@@ -29,7 +31,11 @@ async function call(path, opts = {}) {
   return body
 }
 
-export const post = msg => call('/v1/messages', { method: 'POST', body: JSON.stringify(msg) })
+export const rawPost = msg => call('/v1/messages', { method: 'POST', body: JSON.stringify(msg) })
+// The worker routes posts through its own poster, which never posts the same reply twice.
+let poster = null
+export function onPost(fn) { poster = fn }
+export const post = msg => poster ? poster(msg) : rawPost(msg)
 
 // The shared memory about the user: one document every agent reads and edits.
 // null when the hub has none yet (or is an older porch without it).
@@ -58,8 +64,18 @@ export async function recent({ room, forMe, limit = 8 } = {}) {
 }
 
 // Start watching. `notify` places a phone call, or is null when Anton has no phone.
-export async function start(notify) {
+// durable (the worker): the cursor moves on only after a message is handled, and
+// around(m, fn) wraps the handling so what it does can be keyed to the message.
+// once(fn) does a step of that handling once: a message handled again after a
+// restart gets the first answer back instead of doing the step again.
+let durable = false
+let around = (m, fn) => fn()
+let once = fn => fn()
+export async function start(notify, opts = {}) {
   phoneNotify = notify
+  durable = !!opts.durable
+  if (opts.around) around = opts.around
+  if (opts.once) once = opts.once
   me = await call('/v1/me')
   log(`connected to porch as ${me.name}`)
   agent.onAgentPost(msg => post(msg))
@@ -70,15 +86,19 @@ export async function start(notify) {
 
 // Anton's own news (Claude finished, failed or needs permission) goes on the hub
 // too: in the user's DM with Anton, unless PORCH_ROOM names a room.
-export function relay(notice) {
+export function relayMessage(notice) {
   const kinds = { permission: 'question', failed: 'alert', done: 'note' }
-  post({
+  return {
     ...(config.porchRoom ? { room: config.porchRoom } : { dm: config.porchBoss }),
     kind: kinds[notice.kind] || 'note',
     priority: notice.kind === 'permission' ? 'high' : 'normal',
     to: [config.porchBoss],
     text: notice.text,
-  }).catch(err => log(`could not post to porch: ${err.message}`))
+  }
+}
+
+export function relay(notice) {
+  post(relayMessage(notice)).catch(err => log(`could not post to porch: ${err.message}`))
 }
 
 let watching = null // AbortController while the watcher runs
@@ -91,7 +111,11 @@ export function stop() {
 async function watch() {
   const ctl = watching = new AbortController()
   let after = readCursor()
-  if (after === null) after = (await list({ limit: 1 })).at(-1)?.id || 0
+  if (after === null) {
+    after = (await list({ limit: 1 })).at(-1)?.id || 0
+    // Saved now, so a message that comes before the first cursor write is not skipped after a restart.
+    if (durable) writeCursor(after)
+  }
   while (!ctl.signal.aborted) {
     try {
       const res = await fetch(`${config.porchUrl}/v1/stream?after=${after}`, { headers: auth, signal: ctl.signal })
@@ -113,9 +137,11 @@ async function watch() {
           if (m.type === 'memory') { reflection.pull().catch(() => {}); continue }
           if (!m.id || m.id <= after) continue
           after = m.id
-          writeCursor(after)
-          if (m.from === me.name || members.has(m.from)) continue
-          try { await onMessage(m) } catch (err) { log(`porch message ${m.id}: ${err.message}`) }
+          if (!durable) writeCursor(after)
+          if (m.from !== me.name && !members.has(m.from)) {
+            try { await around(m, () => onMessage(m)) } catch (err) { log(`porch message ${m.id}: ${err.message}`) }
+          }
+          if (durable) writeCursor(after)
         }
       }
       log('porch stream closed')
@@ -173,13 +199,13 @@ ${m.text}`
 
 ${m.text}`
   const say = (text, extra = {}) => post({ as: name, room: m.room, reply_to: m.id, kind: 'answer', text: clip(text, 7500), ...extra })
-  const r = agent.ask(prompt, {
+  const r = once(() => agent.ask(prompt, {
     session,
     label: `${fromOwner ? '' : `[from ${m.from}] `}${clip(m.text, 200)}`,
     queue: true,
     readOnly: !fromOwner,
-    onDone: (result, failed) => say(failed ? `That ended early: ${failed}` : result, failed ? { kind: 'alert' } : {}).catch(err => log(`could not reply as ${name}: ${err.message}`)),
-  })
+    deliver: { type: 'porch-reply', msg: { as: name, room: m.room, reply_to: m.id }, failPrefix: 'That ended early: ' },
+  }))
   if (!r.ok) return say(r.reason).catch(() => {})
   if (r.queued) return say(`Busy with something else; this is next in line.`, { kind: 'note' }).catch(() => {})
 }
@@ -189,7 +215,7 @@ async function onMessage(m) {
   if (session) return toSession(m, session)
   const forMe = m.to.includes(me.name)
   // A reply from an agent that one of Anton's sessions is waiting on finishes that task.
-  if (agent.agentReply(m, { forMe })) return
+  if (once(() => agent.agentReply(m, { forMe }))) return
   // Messages from you that name Anton are instructions.
   if (m.from === config.porchBoss) {
     if (forMe) await command(m)
@@ -203,7 +229,7 @@ async function onMessage(m) {
   if (phoneNotify && worthACall(m, forMe)) {
     // The rules only pick which posts to think about; the call gate decides whether
     // to ring now, hold it for the next call, or drop it.
-    const g = await judgeCall(m)
+    const g = await once(() => judgeCall(m))
     log(`call gate: ${g.decision} for ${m.from}'s post (${g.reason})`)
     if (g.decision === 'skip') return
     const ring = g.decision === 'call' && underDailyCap()
@@ -286,31 +312,40 @@ function liaison(m, { hops = 0, extra = '' } = {}) {
   const r = agent.ask(liaisonPrompt(m) + extra, {
     session: 'liaison', readOnly: true, fresh: true, queue: true,
     label: `[from ${m.from}] ${clip(m.text, 120)}`,
-    onDone: (result, failed) => {
-      if (failed) return reply(m, `${me.name} could not answer that just now. ${config.userName} will see your message.`).catch(() => {})
-      const ask = ASK.exec(result)
-      const owner = FOR_OWNER.exec(result)
-      const text = String(result).replace(FOR_OWNER, '').trim()
-      if (owner && phoneNotify) phoneNotify({ kind: 'note', ring: false, session: 'liaison', text: `${m.from} asked for something only you can OK: ${owner[1]}` })
-      if (ask && hops < 1 && ask[1] !== m.from) return askAround(m, ask[1], ask[2])
-      return reply(m, text).catch(err => log(`liaison reply failed: ${err.message}`))
-    },
+    deliver: { type: 'liaison', m: brief(m), hops },
   })
   return r.ok
 }
 
+// What a deliver target keeps of a porch message.
+const brief = m => ({ id: m.id, from: m.from, room: m.room, text: m.text })
+
+async function liaisonDone({ m, hops }, result, failed) {
+  if (failed) return reply(m, `${me.name} could not answer that just now. ${config.userName} will see your message.`)
+  const ask = ASK.exec(result)
+  const owner = FOR_OWNER.exec(result)
+  const text = String(result).replace(FOR_OWNER, '').trim()
+  if (owner && phoneNotify) phoneNotify({ kind: 'note', ring: false, session: 'liaison', text: `${m.from} asked for something only you can OK: ${owner[1]}` })
+  if (ask && hops < 1 && ask[1] !== m.from) return askAround(m, ask[1], ask[2])
+  return reply(m, text)
+}
+
 // Ask another agent on the asker's behalf, then answer the asker with what came back.
-function askAround(m, other, question) {
-  reply(m, `${me.name} is checking with ${other} and will come back to you.`, { kind: 'note' }).catch(() => {})
-  directory.askAgent(other, `${m.from} asked ${me.name}: "${clip(m.text, 600)}". Can you help with this: ${question}`, {
+async function askAround(m, other, question) {
+  // A note that cannot be posted does not hold up the question.
+  await reply(m, `${me.name} is checking with ${other} and will come back to you.`, { kind: 'note' }).catch(() => {})
+  const r = await directory.askAgent(other, `${m.from} asked ${me.name}: "${clip(m.text, 600)}". Can you help with this: ${question}`, {
     label: `[for ${m.from}] ${clip(question, 120)}`,
     // Asked for another agent, so a Claude session answers read-only.
     readOnly: true,
-    onDone: (result, failed) => {
-      if (failed) return reply(m, `${other} could not answer that (${clip(failed, 120)}).`).catch(() => {})
-      liaison(m, { hops: 1, extra: `\n\n${other} answered ${me.name}'s question about this:\n${clip(result, 4000)}\n\nNow answer ${m.from}, using that.` })
-    },
-  }).then(r => { if (!r.ok) reply(m, `${me.name} could not reach ${other}: ${r.reason}`).catch(() => {}) }).catch(() => {})
+    deliver: { type: 'liaison-answer', m: brief(m), other },
+  })
+  if (!r.ok) await reply(m, `${me.name} could not reach ${other}: ${r.reason}`)
+}
+
+function liaisonAnswer({ m, other }, result, failed) {
+  if (failed) return reply(m, `${other} could not answer that (${clip(failed, 120)}).`)
+  liaison(m, { hops: 1, extra: `\n\n${other} answered ${me.name}'s question about this:\n${clip(result, 4000)}\n\nNow answer ${m.from}, using that.` })
 }
 
 const HELP = `Post a task for anton and Claude does it in the main session. Other things you can post:
@@ -326,9 +361,12 @@ const HELP = `Post a task for anton and Claude does it in the main session. Othe
 - "reflect" to have Anton fold what it learned into the shared memory now
 - "run <session> for <hours> hours: <goal>" to keep a session working for hours; "stop run <session>" ends it early`
 
+// Each step that changes something, and the list of waiting questions the message
+// is read against, goes through once(): handled again after a restart, a message
+// gets the same answers and replies, and changes nothing a second time.
 async function command(m) {
   const text = m.text.trim()
-  const pending = agent.pendingPermissions()
+  const pending = once(() => agent.pendingPermissions())
   let r
 
   // yes / no, optionally followed by a session name
@@ -337,13 +375,15 @@ async function command(m) {
   if (pending.length && (yes || no)) {
     const name = (yes || no)[2]
     const target = name && agent.status(name).name ? name : undefined
-    r = agent.answerPermission(!!yes, no ? text : undefined, target)
+    // Only the questions waiting when the message came: a yes never approves one asked after it.
+    const only = pending.map(p => p.id).filter(id => id != null)
+    r = once(() => agent.answerPermission(!!yes, no ? text : undefined, target, only.length ? only : undefined))
     return reply(m, r.ok ? (yes ? `Approved. ${r.session} is carrying on.` : `Denied. I told ${r.session}.`) : r.reason)
   }
   if (/^(help|\?)$/i.test(text)) return reply(m, HELP)
   let mm
   if ((mm = /^remember(?: that)?\s+([\s\S]+)$/i.exec(text))) {
-    r = memory.remember(mm[1], 'porch')
+    r = once(() => memory.remember(mm[1], 'porch'))
     return reply(m, r.ok ? (r.note || 'Remembered.') : r.reason)
   }
   if ((mm = /^recall\s+([\s\S]+)$/i.exec(text))) {
@@ -351,19 +391,19 @@ async function command(m) {
     return reply(m, found.length ? found.map(f => `${f.when.slice(0, 10)} (${f.kind}) ${f.text}`).join('\n') : 'Nothing I remember matches that.')
   }
   if ((mm = /^forget\s+([\s\S]+)$/i.exec(text))) {
-    r = memory.forget(mm[1])
+    r = once(() => memory.forget(mm[1]))
     return reply(m, r.ok ? `Forgot:\n${r.forgot.map(f => `- ${f}`).join('\n')}` : r.reason)
   }
   if ((mm = /^run\s+(\S+)\s+for\s+([\d.]+)\s*(?:h|hours?)\s*:\s*([\s\S]+)$/i.exec(text))) {
-    r = longrun.startRun({ session: mm[1], hours: Number(mm[2]), goal: mm[3] })
+    r = once(() => longrun.startRun({ session: mm[1], hours: Number(mm[2]), goal: mm[3] }))
     return reply(m, r.ok ? `${r.note} Its notes: ${r.notes}` : r.reason)
   }
   if ((mm = /^stop run\s+(\S+)$/i.exec(text))) {
-    r = longrun.stopRun(mm[1])
+    r = once(() => longrun.stopRun(mm[1]))
     return reply(m, r.ok ? `Stopped the long run in ${r.session}.` : r.reason)
   }
   if (/^reflect$/i.test(text)) {
-    const out = await reflection.reflectNow()
+    const out = await once(() => reflection.reflectNow())
     return reply(m, out ? `Updated the shared memory. It now reads:\n\n${out.memory}` : 'Nothing came out of that reflection. Try again later.')
   }
   if (/^agents\??$/i.test(text)) {
@@ -377,23 +417,23 @@ async function command(m) {
     return reply(m, s.name ? sessionLine(s) + (s.lastResult ? `\nLast result: ${s.lastResult}` : '') : s.reason)
   }
   if ((x = /^stop\b\s*(\S+)?$/i.exec(text))) {
-    r = agent.stop(x[1])
+    r = once(() => agent.stop(x[1]))
     return reply(m, r.ok ? `Stopped ${r.session}.` : r.reason)
   }
   if ((x = /^(?:reset|new conversation)\s*(\S+)?$/i.exec(text))) {
-    r = agent.resetSession(x[1])
+    r = once(() => agent.resetSession(x[1]))
     return reply(m, r.ok ? r.note : r.reason)
   }
   if ((x = /^remove session\s+(\S+)$/i.exec(text))) {
-    r = agent.removeSession(x[1])
+    r = once(() => agent.removeSession(x[1]))
     return reply(m, r.ok ? `Removed ${x[1]}.` : r.reason)
   }
   if ((x = /^new session\s+(\S+)(?:\s+in\s+((?:[a-z]:[\\/])?[^:]+?))?\s*(?::\s+([\s\S]+))?$/i.exec(text))) {
-    r = agent.createSession({ name: x[1], folder: x[2], purpose: x[3] })
+    r = once(() => agent.createSession({ name: x[1], folder: x[2], purpose: x[3] }))
     return reply(m, r.ok ? `Created ${r.name}, working in ${r.folder}. Post "${r.name}: <task>" to use it.` : r.reason)
   }
   if ((x = /^link\s+(\S+)\s+to\s+(\S+)(?:\s*:\s*([\s\S]+))?$/i.exec(text))) {
-    r = agent.linkAgent({ name: x[1], agent: x[2], purpose: x[3] })
+    r = once(() => agent.linkAgent({ name: x[1], agent: x[2], purpose: x[3] }))
     return reply(m, r.ok ? `Linked. Post "${r.name}: <task>" and it goes to ${r.agent}.` : r.reason)
   }
   if ((x = /^claude sessions\s*(.+)?$/i.exec(text))) {
@@ -402,7 +442,7 @@ async function command(m) {
     return reply(m, found.map(f => `${f.id}  ${f.title} (${f.folder}, ${f.lastActive.slice(0, 16).replace('T', ' ')})${f.alreadyAttached ? ' [attached]' : ''}`).join('\n') + '\n\nPost "attach <id> as <name>" to continue one.')
   }
   if ((x = /^attach\s+([0-9a-f-]{36})\s+as\s+(\S+)(?:\s*:\s*([\s\S]+))?$/i.exec(text))) {
-    r = await agent.attachSession({ name: x[2], purpose: x[3], claudeSessionId: x[1] })
+    r = await once(() => agent.attachSession({ name: x[2], purpose: x[3], claudeSessionId: x[1] }))
     return reply(m, r.ok ? `Attached as ${r.name}, in ${r.folder}. It continues as a copy, so your terminal is not disturbed. Post "${r.name}: <task>" to use it.` : r.reason)
   }
   if (pending.length) {
@@ -414,10 +454,10 @@ async function command(m) {
     const other = (await directory.listAgents()).agents.find(a => a.name.toLowerCase() === x[1].toLowerCase())
     if (other) {
       const task = x[2]
-      r = await directory.askAgent(other.name, task, {
+      r = await once(() => directory.askAgent(other.name, task, {
         label: task,
-        onDone: (result, failed) => reply(m, failed ? `[${other.name}] ${failed}` : `[${other.name}] ${result}`, failed ? { kind: 'alert' } : {}),
-      })
+        deliver: { type: 'porch-reply', msg: { room: m.room, reply_to: m.id, to: [m.from] }, prefix: `[${other.name}] `, failPrefix: `[${other.name}] ` },
+      }))
       return reply(m, r.ok ? (r.note || `On it, in ${r.session}.`) : r.reason, { kind: 'note' })
     }
   }
@@ -430,21 +470,42 @@ async function command(m) {
     task = x[2]
   }
   const prompt = `[Task sent through the porch hub by ${m.from}. Your final reply is posted back to the hub as text, so it can be a little longer than a spoken reply. If part of the answer is something only another of ${config.userName}'s agents would know, end your reply with one line: ASK <agent name>: <the question>. ${me.name} will ask it and come back to you with the answer.]\n\n${task}`
-  const finish = (result, failed, asked) => {
-    if (failed) return reply(m, `[${session}] That task ended early: ${failed}`, { kind: 'alert' })
-    const ask = ASK.exec(result)
-    if (!ask || asked) return reply(m, `[${session}] ${String(result).replace(ASK, '').trim()}`)
-    // Ask the agent, then let the same session finish with its answer.
-    reply(m, `[${session}] Checking with ${ask[1]} first; I'll come back with the full answer.`, { kind: 'note' }).catch(() => {})
-    directory.askAgent(ask[1], ask[2], {
-      label: `[for ${session}] ${clip(ask[2], 120)}`,
-      onDone: (answer, err) => agent.ask(`${ask[1]} answered your question${err ? ` with an error: ${err}` : `:\n${clip(answer, 4000)}`}\n\nNow finish the original request:\n${task}`, { session, label: task, queue: true, onDone: (r2, f2) => finish(r2, f2, true) }),
-    }).then(r => { if (!r.ok) reply(m, `[${session}] Could not reach ${ask[1]}: ${r.reason}`).catch(() => {}) })
-  }
-  r = agent.ask(prompt, { session, label: task, queue: true, onDone: (result, failed) => finish(result, failed, false) })
+  r = once(() => agent.ask(prompt, { session, label: task, queue: true, deliver: { type: 'ask-chain', m: brief(m), session, task, asked: false } }))
   if (!r.ok) return reply(m, r.reason)
   const ahead = r.queued ? r.queued - 1 : 0
   return reply(m, r.queued ? `Got it. ${session} is busy, so this waits${ahead ? ` behind ${ahead} other task(s)` : ' and starts next'}.` : `On it, in ${session}.`, { kind: 'note' })
+}
+
+// A task sent from porch is done: answer in the thread. If the session needs another
+// agent first (ASK <agent>: ...), ask it, then let the same session finish.
+async function chainDone({ m, session, task, asked }, result, failed) {
+  if (failed) return reply(m, `[${session}] That task ended early: ${failed}`, { kind: 'alert' })
+  const ask = ASK.exec(result)
+  if (!ask || asked) return reply(m, `[${session}] ${String(result).replace(ASK, '').trim()}`)
+  await reply(m, `[${session}] Checking with ${ask[1]} first; I'll come back with the full answer.`, { kind: 'note' }).catch(() => {})
+  const r = await directory.askAgent(ask[1], ask[2], {
+    label: `[for ${session}] ${clip(ask[2], 120)}`,
+    deliver: { type: 'ask-chain-answer', m, session, task, other: ask[1] },
+  })
+  if (!r.ok) await reply(m, `[${session}] Could not reach ${ask[1]}: ${r.reason}`)
+}
+
+function chainAnswer({ m, session, task, other }, answer, err) {
+  agent.ask(`${other} answered your question${err ? ` with an error: ${err}` : `:\n${clip(answer, 4000)}`}\n\nNow finish the original request:\n${task}`,
+    { session, label: task, queue: true, deliver: { type: 'ask-chain', m, session, task, asked: true } })
+}
+
+// msg: where the reply goes. prefix and failPrefix go before the result or the error.
+function porchReply({ msg, prefix = '', failPrefix = '' }, result, failed) {
+  return post({ ...msg, kind: failed ? 'alert' : 'answer', text: clip(failed ? `${failPrefix}${failed}` : `${prefix}${result}`, 7500) })
+}
+
+// Carries out a deliver target that belongs to this module. Throws when porch could
+// not be reached, so the worker tries again later.
+const DELIVERS = { 'porch-reply': porchReply, liaison: liaisonDone, 'liaison-answer': liaisonAnswer, 'ask-chain': chainDone, 'ask-chain-answer': chainAnswer }
+export const delivers = type => Object.hasOwn(DELIVERS, type)
+export async function deliver(target, result, failed) {
+  await DELIVERS[target.type](target, result, failed)
 }
 
 function sessionLine(s) {

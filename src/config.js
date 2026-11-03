@@ -79,6 +79,13 @@ export const config = {
   // Minutes between rounds of a long run. Back-to-back rounds use up a Claude plan's limit fast.
   longRunGapMinutes: Number(env('LONG_RUN_GAP_MINUTES', 3)),
 
+  // The worker (src/worker.js) runs Claude in its own process so tasks survive a
+  // restart of Anton. Off by default for now.
+  worker: env('WORKER', 'off') === 'on',
+  workerPort: Number(env('WORKER_PORT', 8788)),
+  workerCheckMs: Number(env('WORKER_CHECK_MS', 15000)),
+  workerHeartbeatMs: Number(env('WORKER_HEARTBEAT_MS', 5000)),
+
   porchUrl: env('PORCH_URL', '').replace(/\/$/, ''),
   porchToken: env('PORCH_TOKEN'),
   porchBoss: env('PORCH_BOSS', 'me'),

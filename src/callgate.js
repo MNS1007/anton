@@ -8,7 +8,7 @@
 //   skip: already resolved, already known, or noise
 // When the model can't decide, the answer is hold: a missed call costs little,
 // an unwanted one costs the owner's attention.
-import { query } from '@anthropic-ai/claude-agent-sdk'
+import { query } from './sdk.js'
 import { config } from './config.js'
 import { log } from './log.js'
 

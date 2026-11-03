@@ -2,12 +2,17 @@
 // only lets the caller's own words trigger actions. Shared by both voice engines.
 import { config } from './config.js'
 import { log } from './log.js'
-import * as agent from './agent.js'
+import { agent, remote } from './runner.js'
 import * as hub from './hub.js'
 import * as memory from './memory.js'
-import * as agents from './agents.js'
+import * as localAgents from './agents.js'
 import * as caller from './caller.js'
-import * as longrun from './longrun.js'
+import * as localLongrun from './longrun.js'
+
+// With WORKER=on these run in the worker; the client has the same functions.
+const agents = new Proxy({}, { get: (_, k) => (remote ? remote.agents : localAgents)[k] })
+const longrun = new Proxy({}, { get: (_, k) => (remote ? remote.longrun : localLongrun)[k] })
+const callBackWhenDone = (...a) => remote ? remote.callBackWhenDone(...a) : caller.callBackWhenDone(...a)
 
 const name = config.assistantName
 const user = config.userName
@@ -184,7 +189,7 @@ export function callTools({ onHangup = () => {} } = {}) {
       }
     }
     switch (toolName) {
-      case 'ask_claude': return remember(agent.ask(String(args.message || ''), { session: pick(args.session) }))
+      case 'ask_claude': return remember(await agent.ask(String(args.message || ''), { session: pick(args.session) }))
       case 'get_status': {
         if (args.session) return { ...agent.status(args.session), longRun: longrun.list().find(r => r.session === agent.status(args.session).name) || null }
         // The overview stays short: it is read on a live call. Ask for one session for detail.
@@ -199,25 +204,25 @@ export function callTools({ onHangup = () => {} } = {}) {
           note: 'Short overview. Give a session name for its full status.',
         }
       }
-      case 'start_long_run': return remember(longrun.startRun({ session: pick(args.session), hours: args.hours, goal: args.goal, stopEarly: !!args.stop_early }))
-      case 'stop_long_run': return remember(longrun.stopRun(pick(args.session)))
-      case 'answer_permission': return remember(agent.answerPermission(!!args.approve, args.note, args.session))
-      case 'stop_task': return remember(agent.stop(args.session || undefined))
+      case 'start_long_run': return remember(await longrun.startRun({ session: pick(args.session), hours: args.hours, goal: args.goal, stopEarly: !!args.stop_early }))
+      case 'stop_long_run': return remember(await longrun.stopRun(pick(args.session)))
+      case 'answer_permission': return remember(await agent.answerPermission(!!args.approve, args.note, args.session))
+      case 'stop_task': return remember(await agent.stop(args.session || undefined))
       case 'call_me_back': {
         const running = agent.list().filter(s => s.running).map(s => s.name)
         const asked = Array.isArray(args.sessions) && args.sessions.length ? args.sessions.map(n => agent.status(n).name || n) : running
         const unknown = asked.filter(n => !agent.status(n).name)
         if (unknown.length) return { ok: false, reason: `No session or agent named ${unknown.join(', ')}. Running now: ${running.join(', ') || 'nothing'}.` }
-        return caller.callBackWhenDone(asked, args.note)
+        return await callBackWhenDone(asked, args.note)
       }
-      case 'create_session': return remember(agent.createSession({ name: args.name, purpose: args.purpose, folder: args.folder, newFolder: !!args.new_folder }))
+      case 'create_session': return remember(await agent.createSession({ name: args.name, purpose: args.purpose, folder: args.folder, newFolder: !!args.new_folder }))
       case 'find_claude_sessions': return { sessions: await agent.findClaudeSessions({ folder: args.folder }) }
       case 'attach_session': return remember(await agent.attachSession({ name: args.name, purpose: args.purpose, claudeSessionId: String(args.claude_session_id || '') }))
-      case 'link_agent_session': return remember(agent.linkAgent({ name: args.name, agent: args.agent, purpose: args.purpose }))
+      case 'link_agent_session': return remember(await agent.linkAgent({ name: args.name, agent: args.agent, purpose: args.purpose }))
       case 'list_agents': return await agents.listAgents()
       case 'ask_agent': return remember(await agents.askAgent(args.agent, String(args.message || '')))
       case 'agent_work': outsideTurn = ++clock; return await agents.agentWork(args.agent, { query: args.query, limit: args.limit })
-      case 'reset_session': return remember(agent.resetSession(pick(args.session)))
+      case 'reset_session': return remember(await agent.resetSession(pick(args.session)))
       case 'remember': return memory.remember(args.text, 'call')
       case 'recall': outsideTurn = ++clock; return { found: memory.recall(String(args.query || '')) }
       case 'forget': return memory.forget(String(args.description || ''))

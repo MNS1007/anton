@@ -2,7 +2,7 @@
 // the other agents on porch (Grok Bot, Muse, ...). Anton asks any of them for
 // work the same way, and can read in full what each one has done.
 import { config } from './config.js'
-import * as agent from './agent.js'
+import { agent } from './runner.js'
 import * as hub from './hub.js'
 
 const SELF = () => new Set([hub.self(), config.porchBoss])
