@@ -325,6 +325,7 @@ const runningCount = () => [...sessions.values()].filter(s => s.running && !s.po
 // readOnly: the task comes from another agent, not the user. The session can read
 // and answer but cannot change files or run anything, and asks the user nothing.
 export function ask(message, { session = 'main', label, queue = false, onDone, deliver, readOnly = false, fresh = false } = {}) {
+  if (!String(message || '').trim()) return { ok: false, reason: 'The task is empty. Call again with the task written in message.' }
   if (!onDone && deliver) onDone = (result, failed) => carry(deliver, result, failed)
   const s = find(session)
   if (!s) return { ok: false, reason: `No session named ${session}. Create it first.` }

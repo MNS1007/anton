@@ -207,6 +207,7 @@ function removeSession(name) {
 // Same rules as agent.js. deliver: what to do with the result (plain JSON). key:
 // a task with the same key is made only once.
 function ask(message, { session = 'main', label, queue = false, deliver, readOnly = false, fresh = false, key } = {}) {
+  if (!String(message || '').trim()) return { ok: false, reason: 'The task is empty. Call again with the task written in message.' }
   key = key || nextKey()
   const seen = key && db.get('SELECT id, session FROM tasks WHERE key = ?', key)
   if (seen) return { ok: true, session: seen.session, task: seen.id }
@@ -797,11 +798,12 @@ async function handle(req, res) {
     if (req.method === 'POST' && url.pathname === '/call') {
       const { fn, args = [] } = JSON.parse(await readBody(req) || '{}')
       if (!Object.hasOwn(CALLS, fn)) return send(404, { error: 'unknown call' })
-      return send(200, { result: await CALLS[fn](...(Array.isArray(args) ? args : [])) ?? null })
+      // JSON turns a missing argument into null; give it back as undefined so defaults apply.
+      return send(200, { result: await CALLS[fn](...(Array.isArray(args) ? args : []).map(a => a ?? undefined)) ?? null })
     }
     send(404, { error: 'not found' })
   } catch (err) {
-    log(`worker api: ${clip(err.message, 200)}`)
+    log(`worker api: ${clip(err.message, 200)} (${clip(String(err.stack || '').split('\n')[1]?.trim(), 120)})`)
     send(500, { error: 'failed' })
   }
 }

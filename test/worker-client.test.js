@@ -93,3 +93,18 @@ test('with the worker down, the tools say so instead of failing', async () => {
   worker = h.startWorker(home, env)
   await h.workerUp(home, worker.pid)
 })
+
+test('a tool call with no arguments is refused, never crashes the worker', async () => {
+  const a = await run('ask_claude', {})
+  assert.equal(a.ok, false)
+  assert.match(a.reason, /empty/)
+  const b = await run('ask_agent', {})
+  assert.equal(b.ok, false)
+  const c = await run('ask_agent', { agent: 'main' })
+  assert.equal(c.ok, false)
+  assert.match(c.reason, /empty/)
+  // Options left out arrive as null over JSON; the worker must treat them as missing.
+  const d = await client.agents.askAgent('main', 'hello [id=n1] [ms=50]')
+  assert.equal(d.ok, true, JSON.stringify(d))
+  await idle()
+})

@@ -50,6 +50,7 @@ export async function listAgents() {
 export async function askAgent(name, message, opts = {}) {
   const n = String(name || '').trim()
   if (!n) return { ok: false, reason: 'Say which agent.' }
+  if (!String(message || '').trim()) return { ok: false, reason: 'The message is empty. Call again with the message written in message.' }
   if (agent.status(n).name) return agent.ask(message, { ...opts, session: n })
   const porch = (await porchAgents().catch(() => [])).find(a => a.name.toLowerCase() === n.toLowerCase() || slug(a.name) === slug(n))
   if (!porch) {
