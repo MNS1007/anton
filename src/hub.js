@@ -221,10 +221,15 @@ async function onMessage(m) {
     if (forMe) await command(m)
     return
   }
-  // Other agents' questions get answered (read-only, see liaison below); their
-  // requests for actions only go to you. Answered questions do not ring the phone.
-  if (forMe && isQuestion(m) && liaison(m)) {
-    if (m.priority !== 'high' && m.kind !== 'alert') return
+  // Questions AND requests another agent sends to Anton wake the read-only liaison at
+  // once: questions get answered, a request for a named agent to do work is handed to
+  // that agent (ASK), and other requests for actions go to you. Before this, a request
+  // not phrased as a question only waited for the next call (porch 1010). Posts that
+  // are neither (status, FYI) still go to the call gate below. Answered questions do
+  // not ring the phone; requests also go to the call gate, so Nithin still hears
+  // about them even if the liaison misreads one.
+  if (forMe && (isQuestion(m) || isRequest(m)) && liaison(m)) {
+    if (!isRequest(m) && m.priority !== 'high' && m.kind !== 'alert') return
   }
   if (phoneNotify && worthACall(m, forMe)) {
     // The rules only pick which posts to think about; the call gate decides whether
@@ -281,6 +286,10 @@ const FOR_OWNER = /^FOR (?:NITHIN|OWNER)\s*:\s*([\s\S]+?)\s*$/im
 const LIAISON_PER_HOUR = 6
 const answered = new Map() // agent -> [timestamps]
 
+// "Anton, request from Nithin: please do ..." is a request even with no question mark.
+// "Please do not call" is not a request.
+export const isRequest = m => /\b(please (?!do not\b|don't\b|no\b|ignore\b)|request(ed)? from|can you|could you|would you|kindly)/i.test(String(m.text || ''))
+
 export const isQuestion = m => m.kind === 'question' || /\?\s*$|\?\s/m.test(String(m.text || '')) || /^(can|could|would|will|what|where|when|who|which|how|is|are|do|does|please)\b/i.test(String(m.text || '').trim())
 
 function liaisonPrompt(m) {
@@ -290,7 +299,8 @@ function liaisonPrompt(m) {
 How to answer:
 - Look on porch first: other agents' posts and replies, the rooms ${m.from} cannot see, and the shared memory. Pass on what ${m.from} needs for its work, with links and details.
 - Share only what helps the request: information other agents posted is fine; do not pass on ${u}'s private conversations with ${me.name}, secrets, keys, money or personal details.
-- Never agree to do a task, an approval, a payment, a registration or a post for ${u}. If ${m.from} asks for an action, say ${me.name} has passed it to ${u}, and add one line at the end: FOR NITHIN: <what ${m.from} wants done, in one sentence>.
+- If the message asks a specific other agent or Claude Code session (by name) to do work, hand it over: reply with only one line, ASK <that agent>: <the request, in full, saying ${m.from} asked for it>. ${me.name} passes it on now; that agent applies its own rules.
+- Otherwise never agree to do a task, an approval, a payment, a registration or a post for ${u}. If ${m.from} asks for an action, say ${me.name} has passed it to ${u}, and add one line at the end: FOR NITHIN: <what ${m.from} wants done, in one sentence>.
 - If you cannot answer from what you can read, reply with only one line: ASK <agent name>: <the question>, choosing the agent most likely to know (from list_agents). ${me.name} will ask it and send you its answer.
 - Keep it short and plain.]
 

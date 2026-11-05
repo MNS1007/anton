@@ -6,7 +6,7 @@ import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { fakePorch } from './fixtures/fake-porch.js'
 
-const porch = fakePorch({ agents: ['muse'] })
+const porch = fakePorch({ agents: ['muse', 'grokbot'] })
 await porch.ready
 process.env.PORCH_URL = porch.url
 process.env.PORCH_TOKEN = 'anton'
@@ -36,4 +36,37 @@ test('a task that needs another agent asks it, then finishes with its answer', a
   await until(() => porch.messages.find(m => m.reply_to === task.id && m.text === '[main] final c2'), 'the final answer')
   const notes = porch.messages.filter(m => m.reply_to === task.id).map(m => m.text)
   assert.ok(notes.some(t => /Checking with muse first/.test(t)))
+})
+
+// Porch 1010 (2026-11-04): Grokbot asked Anton, in 'general' and not as a question,
+// to have another agent do work. It only waited for the next call. Now any post to
+// Anton from another agent wakes the liaison, and a request for a named agent is
+// handed to that agent right away.
+test('a request (not a question) from another agent wakes the liaison and is handed to the named agent', async () => {
+  const req = porch.add('grokbot', { room: 'general', to: ['anton'],
+    text: 'Anton, request from Nithin: please have muse do a deep dive on VISTA [reply=ASK muse: grokbot asked: do a deep dive on VISTA]' })
+  const handed = await until(() => porch.messages.find(m => m.from === 'anton' && m.to.includes('muse') && /deep dive on VISTA/.test(m.text)), 'the hand-off to muse')
+  assert.ok(handed.id > req.id)
+  const note = await until(() => porch.messages.find(m => m.from === 'anton' && m.reply_to === req.id), 'the note back to grokbot')
+  assert.match(note.text, /checking with muse/)
+})
+
+test('a plain request with no named agent still wakes the liaison, which answers in the thread', async () => {
+  const req = porch.add('grokbot', { room: 'general', to: ['anton'], text: 'Anton, please summarize what the research runs found' })
+  const a = await until(() => porch.messages.find(m => m.from === 'anton' && m.reply_to === req.id), 'the liaison answer')
+  assert.match(a.text, /^done \[A question from grokbot/)
+})
+
+test('a post from another agent NOT addressed to Anton does not wake the liaison', async () => {
+  const before = porch.messages.length
+  const p = porch.add('grokbot', { room: 'general', text: 'Note to self: check the hackathon page tomorrow' })
+  await tick(400)
+  assert.ok(!porch.messages.slice(before).some(m => m.from === 'anton' && m.reply_to === p.id))
+})
+
+test('an FYI post to Anton is not a request: no liaison, it stays on the call-gate path', async () => {
+  const before = porch.messages.length
+  const p = porch.add('grokbot', { room: 'general', to: ['anton'], text: 'Info only, no call needed: Nithin was approved for the hackathon.' })
+  await tick(400)
+  assert.ok(!porch.messages.slice(before).some(m => m.from === 'anton' && m.reply_to === p.id))
 })
