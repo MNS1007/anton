@@ -1,6 +1,7 @@
 // Holds updates for the user and makes sure they hear them:
 // tell them on the live call, or call them, and call again until they pick up.
 import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import twilio from 'twilio'
 import { config } from './config.js'
 import { log } from './log.js'
@@ -33,7 +34,7 @@ export function keepIn(file) {
   if (earlier.length) log(`${earlier.length} update(s) from before the restart are waiting to be heard`)
   if (saved?.ring && earlier.length) wantCall = true
   save()
-  if (wantCall && queue.length && !active && !outbound && !retryTimer) dial()
+  if (wantCall && queue.length && !active && !outbound && !retryTimer) tryDial()
 }
 
 function save() {
@@ -61,6 +62,41 @@ const finishes = notice => notice.kind === 'done' || notice.kind === 'failed'
 // Places the call; tests swap it out so nothing is dialled.
 let dial = () => placeCall()
 export function setDialer(fn) { dial = fn }
+
+// "Don't call me for 45 minutes": no call of any kind before the time the user set,
+// not for a finished task, a promised callback or a permission question. Held updates
+// wait and one call goes out when it ends. Kept in a file, so a restart keeps it, and
+// only the user can set or clear it (dont_call is a user-only tool on calls).
+const dontCallFile = () => join(config.antonHome, 'dont-call.json')
+export function dontCallUntil(now = Date.now()) {
+  try {
+    const d = JSON.parse(readFileSync(dontCallFile(), 'utf8'))
+    return Number(d.until) > now ? { until: Number(d.until), reason: d.reason || '' } : null
+  } catch { return null }
+}
+export function dontCall(minutes, reason = '') {
+  const m = Number(minutes) || 0
+  const until = m > 0 ? Date.now() + m * 60000 : 0
+  try { writeFileSync(dontCallFile(), JSON.stringify({ until, reason, set: Date.now() })) } catch (err) { return { ok: false, reason: err.message } }
+  // Re-plan any call that was waiting: later if now blocked, now if just cleared.
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null }
+  if (wantCall && queue.length && !active && !outbound) tryDial()
+  if (!until) { log('do-not-call cleared'); return { ok: true, note: 'Calls are allowed again.' } }
+  const at = new Date(until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  log(`do not call until ${at}${reason ? ` (${reason})` : ''}`)
+  return { ok: true, until: at, note: `No calls until ${at}, even if work finishes or Claude needs permission. Anything new waits for one call then.` }
+}
+function tryDial() {
+  const d = dontCallUntil()
+  if (d) {
+    if (!retryTimer) {
+      log(`do-not-call until ${new Date(d.until).toLocaleTimeString()}; the call waits`)
+      retryTimer = setTimeout(() => { retryTimer = null; if (wantCall && queue.length && !active && !outbound) tryDial() }, d.until - Date.now() + 1000)
+    }
+    return
+  }
+  dial()
+}
 export const heldUpdates = () => [...queue]
 
 // ring: false keeps the update for the next call without placing one.
@@ -96,7 +132,7 @@ export function notify(notice) {
   }
   if (ring) wantCall = true
   save()
-  if (ring && !outbound && !retryTimer) dial()
+  if (ring && !outbound && !retryTimer) tryDial()
 }
 
 // Called by the bridge when a call connects. Returns what to tell the user first.
@@ -158,9 +194,10 @@ function scheduleRetry() {
 
 async function placeCall() {
   if (active || outbound) return
-  const wait = msUntilQuietEnds()
+  const dc = dontCallUntil()
+  const wait = Math.max(msUntilQuietEnds(), dc ? dc.until - Date.now() + 1000 : 0)
   if (wait > 0) {
-    log(`quiet hours; calling in ${Math.round(wait / 60000)} min`)
+    log(`${dc ? 'do-not-call' : 'quiet hours'}; calling in ${Math.round(wait / 60000)} min`)
     retryTimer = setTimeout(() => { retryTimer = null; placeCall() }, wait)
     return
   }

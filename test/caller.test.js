@@ -74,3 +74,33 @@ test('with keepIn, updates not heard yet survive a restart of the front', async 
   assert.deepEqual(third.c.heldUpdates(), [], 'heard updates are not kept')
   assert.equal(third.rang(), 0)
 })
+
+// 2026-11-04: "don't call me, I'm at dinner, call me in 45 minutes" was only a note,
+// so the callback rang 3 minutes later. dont_call is now enforced.
+test('do-not-call holds every call, even a promised callback and a permission question', () => {
+  caller.dontCall(45, 'at dinner')
+  assert.ok(caller.dontCallUntil())
+  caller.callBackWhenDone(['main'], 'the artifact')
+  caller.notify({ kind: 'done', session: 'main', text: 'artifact done' })
+  caller.notify({ kind: 'permission', session: 'main', text: 'main wants to run npm install' })
+  assert.equal(dials, 0)
+  assert.ok(caller.heldUpdates().includes('artifact done'))
+  caller.dontCall(0)
+  assert.equal(dials, 1, 'clearing it places the one waiting call')
+})
+
+test('when the do-not-call time passes, the waiting call goes out by itself', async () => {
+  caller.dontCall(0.002, 'short') // about 120 ms
+  caller.notify({ kind: 'done', session: 'main', text: 'main finished' })
+  assert.equal(dials, 0)
+  await new Promise(r => setTimeout(r, 1400))
+  assert.equal(dials, 1)
+  assert.equal(caller.dontCallUntil(), null)
+})
+
+test('do-not-call survives a restart of the front', async () => {
+  caller.dontCall(30, 'at dinner')
+  const fresh = await import(`../src/caller.js?restart=${Date.now()}`)
+  assert.equal(fresh.dontCallUntil()?.reason, 'at dinner')
+  caller.dontCall(0)
+})
